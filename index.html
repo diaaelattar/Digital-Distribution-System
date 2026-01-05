@@ -1,0 +1,569 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>منظومة التوزيع الرقمي v2.0</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.2/gsap.min.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;900&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="styles.css">
+</head>
+
+<body class="pb-20">
+
+    <!-- Navbar -->
+    <nav class="sticky top-0 z-50 glass border-b border-white/5 px-6 py-4 mb-8 no-print">
+        <div class="max-w-7xl mx-auto flex justify-between items-center">
+            <div class="flex items-center gap-4">
+                <div
+                    class="w-12 h-12 bg-indigo-600 rounded-2xl flex items-center justify-center shadow-lg shadow-indigo-500/20">
+                    <svg class="w-7 h-7 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                            d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
+                    </svg>
+                </div>
+                <div>
+                    <h1
+                        class="text-xl font-black tracking-tight bg-clip-text text-transparent bg-gradient-to-r from-white to-slate-400">
+                        منظومة التوزيع الرقمي</h1>
+                    <p class="text-[10px] text-indigo-400 font-bold uppercase tracking-widest">Digital Distribution
+                        System</p>
+                </div>
+            </div>
+            <div class="flex bg-slate-800/50 p-1.5 rounded-2xl gap-2 border border-white/5 no-print">
+                <button onclick="navigate('supervisor')" id="nav-supervisor"
+                    class="px-5 py-2 rounded-xl text-sm font-bold transition-all duration-300 tab-active">بوابة
+                    الموجه</button>
+                <button onclick="navigate('admin')" id="nav-admin"
+                    class="px-5 py-2 rounded-xl text-sm font-bold transition-all duration-300 text-slate-400 hover:text-white">لوحة
+                    الإدارة</button>
+            </div>
+        </div>
+    </nav>
+
+    <main class="max-w-7xl mx-auto px-4 md:px-6">
+
+        <!-- View: Supervisor -->
+        <section id="view-supervisor" class="space-y-8 max-w-2xl mx-auto">
+            <div class="glass rounded-[2.5rem] p-10 text-center relative overflow-hidden group">
+                <div
+                    class="absolute -top-24 -right-24 w-48 h-48 bg-indigo-500/10 rounded-full blur-3xl group-hover:bg-indigo-500/20 transition-all duration-700">
+                </div>
+                <h2 class="text-3xl font-black mb-4">تسجيل الدخول</h2>
+                <p class="text-slate-400 mb-8 font-medium">أدخل الكود الخاص بك للبدء في اختيار الرغبات المدرسية</p>
+
+                <div class="space-y-4">
+                    <select id="loginGuidance" onchange="updateLoginSupervisorList()"
+                        class="w-full p-5 bg-slate-950/80 rounded-2xl text-sm border border-white/10 text-indigo-300 focus:ring-2 focus:ring-indigo-500 outline-none transition-all">
+                        <option value="">اختر التوجيه الخاص بك...</option>
+                    </select>
+                    <div class="relative">
+                        <input list="supervisorList" id="loginSupervisorInput"
+                            placeholder="اكتب اسم الموجه هنا للبحث..."
+                            class="w-full p-5 bg-slate-950/80 rounded-2xl text-sm border border-white/10 text-emerald-300 focus:ring-2 focus:ring-emerald-500 outline-none transition-all">
+                        <datalist id="supervisorList"></datalist>
+                    </div>
+                    <button onclick="handleLogin()" id="loginBtn"
+                        class="w-full btn-premium py-5 rounded-2xl font-black text-lg flex items-center justify-center gap-3">
+                        <span>دخول النظام</span>
+                        <div id="loginLoading" class="hidden loading-spinner"></div>
+                    </button>
+                    <div class="pt-2">
+                        <button onclick="syncAllData()"
+                            class="text-[10px] text-slate-500 hover:text-indigo-400 transition-colors flex items-center justify-center gap-2 mx-auto">
+                            <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                    d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                            </svg>
+                            تحديث البيانات من الشيت
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Wishes Form (Hidden) -->
+            <div id="wishesSection" class="hidden space-y-8 animate-in slide-in-from-bottom duration-500">
+                <div class="glass rounded-[2rem] p-8 flex flex-col md:flex-row justify-between items-center gap-6">
+                    <div>
+                        <h3 id="supHello" class="text-2xl font-bold mb-2"></h3>
+                        <div class="flex gap-2">
+                            <span id="supGuidance"
+                                class="px-3 py-1 bg-indigo-500/20 text-indigo-300 rounded-lg text-xs font-bold ring-1 ring-indigo-500/30"></span>
+                            <span id="supSpecialty"
+                                class="px-3 py-1 bg-emerald-500/20 text-emerald-300 rounded-lg text-xs font-bold ring-1 ring-emerald-500/30"></span>
+                        </div>
+                    </div>
+                    <button onclick="navigate('supervisor')"
+                        class="bg-slate-800 hover:bg-slate-700 text-slate-300 px-6 py-3 rounded-xl text-sm font-bold border border-white/5 flex items-center gap-2 transition-all">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+                        </svg>
+                        تسجيل الخروج / عودة
+                    </button>
+                </div>
+
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
+                    <!-- Wish slot 1 -->
+                    <div class="bg-white/5 p-6 rounded-[2rem] border border-white/5 space-y-4">
+                        <label class="text-sm font-bold text-slate-400 flex items-center justify-between">
+                            <span class="flex items-center gap-2">
+                                <span
+                                    class="w-6 h-6 bg-indigo-600 rounded-lg flex items-center justify-center text-[10px] text-white font-black">1</span>
+                                الرغبة الأولى
+                            </span>
+                        </label>
+                        <div class="grid grid-cols-2 gap-3">
+                            <select id="filter-stage-1" onchange="renderSchoolSelects(1)"
+                                class="p-3 bg-slate-950 rounded-xl text-[10px] border border-white/5 text-indigo-300">
+                                <option value="">كل المراحل</option>
+                            </select>
+                            <select id="filter-type-1" onchange="renderSchoolSelects(1)"
+                                class="p-3 bg-slate-950 rounded-xl text-[10px] border border-white/5 text-emerald-300">
+                                <option value="">كل النوعيات</option>
+                            </select>
+                        </div>
+                        <select id="wish1" class="w-full p-4 input-premium rounded-xl text-sm school-select"></select>
+                    </div>
+
+                    <!-- Wish slot 2 -->
+                    <div class="bg-white/5 p-6 rounded-[2rem] border border-white/5 space-y-4">
+                        <label class="text-sm font-bold text-slate-400 flex items-center justify-between">
+                            <span class="flex items-center gap-2">
+                                <span
+                                    class="w-6 h-6 bg-indigo-600 rounded-lg flex items-center justify-center text-[10px] text-white font-black">2</span>
+                                الرغبة الثانية
+                            </span>
+                        </label>
+                        <div class="grid grid-cols-2 gap-3">
+                            <select id="filter-stage-2" onchange="renderSchoolSelects(2)"
+                                class="p-3 bg-slate-950 rounded-xl text-[10px] border border-white/5 text-indigo-300">
+                                <option value="">كل المراحل</option>
+                            </select>
+                            <select id="filter-type-2" onchange="renderSchoolSelects(2)"
+                                class="p-3 bg-slate-950 rounded-xl text-[10px] border border-white/5 text-emerald-300">
+                                <option value="">كل النوعيات</option>
+                            </select>
+                        </div>
+                        <select id="wish2" class="w-full p-4 input-premium rounded-xl text-sm school-select"></select>
+                    </div>
+
+                    <!-- Wish slot 3 -->
+                    <div class="bg-white/5 p-6 rounded-[2rem] border border-white/5 space-y-4">
+                        <label class="text-sm font-bold text-slate-400 flex items-center justify-between">
+                            <span class="flex items-center gap-2">
+                                <span
+                                    class="w-6 h-6 bg-indigo-600 rounded-lg flex items-center justify-center text-[10px] text-white font-black">3</span>
+                                الرغبة الثالثة
+                            </span>
+                        </label>
+                        <div class="grid grid-cols-2 gap-3">
+                            <select id="filter-stage-3" onchange="renderSchoolSelects(3)"
+                                class="p-3 bg-slate-950 rounded-xl text-[10px] border border-white/5 text-indigo-300">
+                                <option value="">كل المراحل</option>
+                            </select>
+                            <select id="filter-type-3" onchange="renderSchoolSelects(3)"
+                                class="p-3 bg-slate-950 rounded-xl text-[10px] border border-white/5 text-emerald-300">
+                                <option value="">كل النوعيات</option>
+                            </select>
+                        </div>
+                        <select id="wish3" class="w-full p-4 input-premium rounded-xl text-sm school-select"></select>
+                    </div>
+
+                    <!-- Wish slot 4 -->
+                    <div class="bg-white/5 p-6 rounded-[2rem] border border-white/5 space-y-4">
+                        <label class="text-sm font-bold text-slate-400 flex items-center justify-between">
+                            <span class="flex items-center gap-2">
+                                <span
+                                    class="w-6 h-6 bg-indigo-600 rounded-lg flex items-center justify-center text-[10px] text-white font-black">4</span>
+                                الرغبة الرابعة
+                            </span>
+                        </label>
+                        <div class="grid grid-cols-2 gap-3">
+                            <select id="filter-stage-4" onchange="renderSchoolSelects(4)"
+                                class="p-3 bg-slate-950 rounded-xl text-[10px] border border-white/5 text-indigo-300">
+                                <option value="">كل المراحل</option>
+                            </select>
+                            <select id="filter-type-4" onchange="renderSchoolSelects(4)"
+                                class="p-3 bg-slate-950 rounded-xl text-[10px] border border-white/5 text-emerald-300">
+                                <option value="">كل النوعيات</option>
+                            </select>
+                        </div>
+                        <select id="wish4" class="w-full p-4 input-premium rounded-xl text-sm school-select"></select>
+                    </div>
+                </div>
+
+                <div class="glass p-8 rounded-3xl border-l-4 border-l-amber-500 bg-amber-500/5">
+                    <p class="text-sm leading-relaxed text-slate-300">
+                        <strong class="text-amber-500">ملاحظة هامة:</strong> المدارس المميزة بنجمة (<span
+                            class="text-amber-400">⭐</span>) هي المدارس التابعة لتخصصك. يمكنك اختيار أي مدرسة أخرى لكن
+                        الأولوية للرغبات المنسجمة مع تخصص الموجه.
+                    </p>
+                </div>
+
+                <button onclick="submitWishes()" id="submitBtn"
+                    class="w-full bg-emerald-600 hover:bg-emerald-700 py-6 rounded-2xl font-black text-xl transition-all shadow-lg shadow-emerald-900/20 flex items-center justify-center gap-4">
+                    <span>حفظ الرغبات الآن</span>
+                    <div id="submitLoading" class="hidden loading-spinner"></div>
+                </button>
+            </div>
+        </section>
+
+        <!-- View: Admin -->
+        <section id="view-admin" class="hidden space-y-8 animate-in fade-in duration-500">
+            <!-- Admin Navigation Sub-tabs -->
+            <div class="flex gap-4 mb-6 no-print">
+                <button onclick="switchAdminTab('sync')" id="admin-tab-sync"
+                    class="px-6 py-2 rounded-xl font-bold transition-all bg-indigo-600">المزامنة والإعدادات</button>
+                <button onclick="switchAdminTab('mandatory')" id="admin-tab-mandatory"
+                    class="px-6 py-2 rounded-xl font-bold transition-all bg-slate-800 text-slate-400 hover:text-white">التكليف
+                    الإجباري</button>
+                <button onclick="switchAdminTab('results')" id="admin-tab-results"
+                    class="px-6 py-2 rounded-xl font-bold transition-all bg-slate-800 text-slate-400 hover:text-white">النتائج
+                    النهائية</button>
+                <button onclick="switchAdminTab('raw')" id="admin-tab-raw"
+                    class="px-6 py-2 rounded-xl font-bold transition-all bg-slate-800 text-slate-400 hover:text-white">بيانات
+                    الشيت</button>
+            </div>
+
+            <!-- Config Card -->
+            <div id="admin-view-sync" class="glass rounded-[2.5rem] p-10">
+                <h3 class="text-2xl font-bold mb-6 flex items-center gap-3 text-indigo-400">
+                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                            d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                            d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                    </svg>
+                    إعدادات المزامنة الشاملة
+                </h3>
+
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
+                    <div class="space-y-4">
+                        <label class="text-xs font-bold text-slate-500 uppercase tracking-widest px-2">معرف ملف جوجل شيت
+                            (Sheet ID)</label>
+                        <input type="text" id="sheetId" placeholder="مثال: 1a2b3c4d5e6f7g8h9i0j..."
+                            class="w-full p-4 input-premium rounded-xl font-mono text-sm">
+                    </div>
+                    <div class="space-y-4">
+                        <label class="text-xs font-bold text-slate-500 uppercase tracking-widest px-2">رابط GAS Web App
+                            (للاستقبال)</label>
+                        <input type="text" id="gasUrl" placeholder="https://script.google.com/macros/s/.../exec"
+                            class="w-full p-4 input-premium rounded-xl font-mono text-sm">
+                    </div>
+                </div>
+
+                <div class="mt-10 pt-8 border-t border-white/5 flex flex-wrap gap-4">
+                    <button onclick="syncAllData()"
+                        class="btn-premium px-8 py-4 rounded-xl flex items-center gap-3 font-bold group">
+                        <svg class="w-5 h-5 group-hover:rotate-180 transition-transform duration-500" fill="none"
+                            stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                        </svg>
+                        مزامنة وتحليل البيانات
+                    </button>
+                    <button onclick="exportResults()" id="exportExcel"
+                        class="bg-slate-800 hover:bg-slate-700 px-8 py-4 rounded-xl flex items-center gap-3 font-bold border border-white/10">
+                        تصدير التوزيع النهائي
+                    </button>
+                    <button onclick="window.print()"
+                        class="bg-indigo-600 hover:bg-indigo-700 px-8 py-4 rounded-xl flex items-center gap-3 font-bold border border-white/10 no-print">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z" />
+                        </svg>
+                        طباعة كشف التوزيع
+                    </button>
+                </div>
+
+                <!-- Sync Log / Diagnostics -->
+                <div class="mt-8 bg-slate-950/50 rounded-2xl p-6 border border-white/5 font-mono text-xs">
+                    <p class="text-indigo-400 font-bold mb-4 flex items-center gap-2">
+                        <span class="w-2 h-2 bg-indigo-500 rounded-full animate-pulse"></span>
+                        سجل المزامنة الفني (Technical Log)
+                    </p>
+                    <div id="syncLog" class="space-y-1 max-h-48 overflow-y-auto custom-scrollbar">
+                        <div class="text-slate-500">بانتظار بدء المزامنة...</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Quick Add Section (Diagnostics) -->
+            <div class="mt-12 pt-8 border-t border-white/5">
+                <h4 class="text-lg font-bold mb-6 text-slate-400 flex items-center gap-2">
+                    <span>إضافة سريعة (للتأكد من الاتصال)</span>
+                    <span
+                        class="text-[10px] bg-indigo-500/20 text-indigo-400 px-2 py-0.5 rounded-full uppercase">Diagnostic</span>
+                </h4>
+
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+                    <!-- Add School -->
+                    <div class="bg-white/5 p-6 rounded-2xl border border-white/5 space-y-4">
+                        <p class="font-bold text-sm text-indigo-300">إضافة مدرسة جديدة</p>
+                        <input type="text" id="newSchoolName" placeholder="اسم المدرسة"
+                            class="w-full p-3 bg-slate-900 rounded-xl text-xs border border-white/5">
+                        <input type="text" id="newSchoolCode" placeholder="كود المدرسة"
+                            class="w-full p-3 bg-slate-900 rounded-xl text-xs border border-white/5">
+                        <button onclick="quickAddRecord('school')"
+                            class="w-full py-2 bg-indigo-600 hover:bg-indigo-700 rounded-xl text-xs font-bold transition-colors">إضافة
+                            مدرسة</button>
+                    </div>
+
+                    <!-- Add Supervisor -->
+                    <div class="bg-white/5 p-6 rounded-2xl border border-white/5 space-y-4">
+                        <p class="font-bold text-sm text-emerald-300">إضافة موجه جديد</p>
+                        <input type="text" id="newSupName" placeholder="اسم الموجه"
+                            class="w-full p-3 bg-slate-900 rounded-xl text-xs border border-white/5">
+                        <input type="text" id="newSupCode" placeholder="كود الموجه"
+                            class="w-full p-3 bg-slate-900 rounded-xl text-xs border border-white/5">
+                        <button onclick="quickAddRecord('supervisor')"
+                            class="w-full py-2 bg-emerald-600 hover:bg-emerald-700 rounded-xl text-xs font-bold transition-colors">إضافة
+                            موجه</button>
+                    </div>
+
+                    <!-- Add Guidance -->
+                    <div class="bg-white/5 p-6 rounded-2xl border border-white/5 space-y-4">
+                        <p class="font-bold text-sm text-sky-300">إضافة توجيه جديد</p>
+                        <input type="text" id="newGuidName" placeholder="اسم التوجيه"
+                            class="w-full p-3 bg-slate-900 rounded-xl text-xs border border-white/5">
+                        <input type="text" id="newGuidCode" placeholder="كود التوجيه"
+                            class="w-full p-3 bg-slate-900 rounded-xl text-xs border border-white/5">
+                        <button onclick="quickAddRecord('guidance')"
+                            class="w-full py-2 bg-sky-600 hover:bg-sky-700 rounded-xl text-xs font-bold transition-colors">إضافة
+                            توجيه</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Mandatory Assignments View -->
+            <div id="admin-view-mandatory" class="hidden space-y-8">
+                <div class="glass rounded-[2rem] p-8">
+                    <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-6 mb-8">
+                        <div>
+                            <h4 class="text-xl font-bold mb-1">تحديد التكليف الإجباري</h4>
+                            <p class="text-[10px] text-slate-500">قم بتثبيت موجهين محددين لمدارس معينة قبل البدء
+                                بالتوزيع التلقائي</p>
+                        </div>
+                        <input type="text" id="mandatorySearch" onkeyup="filterMandatoryTable()"
+                            placeholder="بحث سريع بأسم المدرسة..."
+                            class="max-w-md w-full p-3 input-premium rounded-xl text-sm">
+                    </div>
+
+                    <!-- Filters Row -->
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+                        <select id="man-filter-stage" onchange="renderMandatoryTable()"
+                            class="p-4 bg-slate-900/50 rounded-xl text-xs border border-white/5 text-indigo-300">
+                            <option value="">جميع المراحل</option>
+                        </select>
+                        <select id="man-filter-type" onchange="renderMandatoryTable()"
+                            class="p-4 bg-slate-900/50 rounded-xl text-xs border border-white/5 text-emerald-300">
+                            <option value="">جميع النوعيات</option>
+                        </select>
+                        <select id="man-filter-guid" onchange="renderMandatoryTable()"
+                            class="p-4 bg-slate-900/50 rounded-xl text-xs border border-white/5 text-sky-300">
+                            <option value="">جميع التوجيهات</option>
+                        </select>
+                    </div>
+
+                    <!-- Bulk Actions -->
+                    <div
+                        class="bg-indigo-600/10 border border-indigo-500/20 p-6 rounded-2xl mb-8 flex flex-col md:flex-row items-center justify-between gap-4">
+                        <div class="flex items-center gap-4">
+                            <div class="w-10 h-10 bg-indigo-600 rounded-xl flex items-center justify-center text-white">
+                                ⚡</div>
+                            <div>
+                                <p class="text-sm font-bold">تخصيص سريع للكل</p>
+                                <p class="text-[10px] text-slate-400">تطبيق موجه واحد على كل المدارس المعروضة حالياً
+                                    بناءً على التصفية</p>
+                            </div>
+                        </div>
+                        <div class="flex gap-3 w-full md:w-auto">
+                            <select id="bulkSupSelect"
+                                class="bg-slate-900 border border-white/10 rounded-xl px-4 py-3 text-xs focus:border-indigo-500 outline-none transition-all min-w-[200px]">
+                                <option value="">اختر الموجه...</option>
+                            </select>
+                            <button onclick="applyBulkMandatory()"
+                                class="bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-3 rounded-xl text-xs font-bold transition-all whitespace-nowrap">تطبيق
+                                على الكل</button>
+                        </div>
+                    </div>
+
+                    <div class="overflow-x-auto max-h-[600px] border border-white/5 rounded-2xl">
+                        <table class="w-full text-right">
+                            <thead class="sticky top-0 bg-slate-950 z-10">
+                                <tr
+                                    class="text-slate-400 text-[10px] uppercase font-black tracking-widest bg-slate-900/80">
+                                    <th class="px-6 py-5">المدرسة</th>
+                                    <th class="px-6 py-5">المرحلة</th>
+                                    <th class="px-6 py-5">النوعية</th>
+                                    <th class="px-6 py-5">التوجيه</th>
+                                    <th class="px-6 py-5">الموجه المكلّف</th>
+                                </tr>
+                            <tbody id="mandatoryBody" class="divide-y divide-white/5">
+                                <!-- Populated after sync -->
+                            </tbody>
+                        </table>
+                    </div>
+                    <div class="mt-8 flex flex-col md:flex-row justify-end gap-3">
+                        <button onclick="saveMandatoryAssignments()"
+                            class="bg-slate-800 hover:bg-slate-700 text-slate-300 px-8 py-4 rounded-2xl font-bold border border-white/5 transition-all">حفظ
+                            قائمة التكليفات فقط</button>
+                        <button onclick="runDistribution(); showToast('تم تحديث التوزيع بناءً على التكليف', '🎯')"
+                            class="btn-premium px-10 py-4 rounded-2xl font-black">حفظ وبدء التحليل النهائي</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Dashboard / Results View -->
+            <div id="admin-view-results" class="hidden space-y-8 animate-in slide-in-from-bottom duration-700">
+                <div class="grid grid-cols-1 md:grid-cols-4 gap-6">
+                    <div class="glass p-8 rounded-3xl group">
+                        <div class="flex justify-between items-start mb-4">
+                            <span class="text-indigo-400 font-black text-xs">إجمالي المدارس</span>
+                            <div
+                                class="w-8 h-8 rounded-lg bg-indigo-500/10 flex items-center justify-center text-indigo-400">
+                                Σ</div>
+                        </div>
+                        <p id="statSchools" class="text-4xl font-black">0</p>
+                    </div>
+                    <div class="glass p-8 rounded-3xl group">
+                        <div class="flex justify-between items-start mb-4">
+                            <span class="text-emerald-400 font-black text-xs">نسبة التغطية</span>
+                            <div
+                                class="w-8 h-8 rounded-lg bg-emerald-500/10 flex items-center justify-center text-emerald-400">
+                                %</div>
+                        </div>
+                        <p id="statCoverage" class="text-4xl font-black">0%</p>
+                    </div>
+                    <div class="glass p-8 rounded-3xl group">
+                        <div class="flex justify-between items-start mb-4">
+                            <span class="text-sky-400 font-black text-xs">الموجهين النشطين</span>
+                            <div class="w-8 h-8 rounded-lg bg-sky-500/10 flex items-center justify-center text-sky-400">
+                                👤</div>
+                        </div>
+                        <p id="statSupervisors" class="text-4xl font-black">0</p>
+                    </div>
+                    <div class="glass p-8 rounded-3xl group">
+                        <div class="flex justify-between items-start mb-4">
+                            <span class="text-amber-400 font-black text-xs">الرغبات المسجلة</span>
+                            <div
+                                class="w-8 h-8 rounded-lg bg-amber-500/10 flex items-center justify-center text-amber-400">
+                                ♥</div>
+                        </div>
+                        <p id="statWishes" class="text-4xl font-black">0</p>
+                    </div>
+                </div>
+
+                <div class="glass rounded-[2rem] overflow-hidden">
+                    <div
+                        class="p-8 border-b border-white/5 flex flex-col md:flex-row justify-between items-center gap-6">
+                        <div class="flex flex-col gap-1">
+                            <h4 class="text-xl font-bold">تقرير التوزيع التفصيلي</h4>
+                            <p class="text-[10px] text-slate-500">نتائج التوزيع النهائي بناءً على الرغبات والضوابط
+                                المحددة</p>
+                        </div>
+                        <div class="flex items-center gap-4 w-full md:w-auto">
+                            <input type="text" id="adminSearch" onkeyup="filterAdminTable()"
+                                placeholder="بحث في النتائج..."
+                                class="p-3 bg-slate-900 rounded-xl text-xs border border-white/5 w-full">
+                            <button onclick="pushResultsToSheet()"
+                                class="bg-emerald-600 hover:bg-emerald-700 text-white px-6 py-3 rounded-xl text-xs font-bold flex items-center gap-2 whitespace-nowrap">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                        d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+                                </svg>
+                                حفظ النتائج في الشيت
+                            </button>
+                            <button onclick="generateOfficialGeneralReport()"
+                                class="bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-3 rounded-xl text-xs font-bold flex items-center gap-2 whitespace-nowrap no-print">
+                                📋 الكشف العام
+                            </button>
+                            <button onclick="generateIndividualLetters()"
+                                class="bg-amber-600 hover:bg-amber-700 text-white px-6 py-3 rounded-xl text-xs font-bold flex items-center gap-2 whitespace-nowrap no-print">
+                                ✉️ خطابات التكليف
+                            </button>
+                        </div>
+                    </div>
+                </div>
+                <div class="overflow-x-auto">
+                    <table class="w-full text-right" id="mainTable">
+                        <thead>
+                            <tr class="bg-indigo-950/40 text-slate-400">
+                                <th class="px-8 py-5 text-xs font-black uppercase tracking-widest">اسم
+                                    المدرسة
+                                </th>
+                                <th class="px-8 py-5 text-xs font-black uppercase tracking-widest">
+                                    الموجه المسكن
+                                </th>
+                                <th class="px-8 py-5 text-xs font-black uppercase tracking-widest">
+                                    التوجيه</th>
+                                <th class="px-8 py-5 text-xs font-black uppercase tracking-widest">
+                                    المرحلة</th>
+                                <th class="px-8 py-5 text-xs font-black uppercase tracking-widest">آلية
+                                    التوزيع
+                                </th>
+                            </tr>
+                        </thead>
+                        <tbody id="resultBody" class="divide-y divide-white/5 font-medium">
+                            <!-- Data injected here -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            </div>
+
+            <!-- Raw Data View -->
+            <div id="admin-view-raw" class="hidden space-y-8 animate-in fade-in duration-500">
+                <div class="glass rounded-[2rem] p-8">
+                    <div class="flex flex-wrap gap-4 mb-8">
+                        <button onclick="renderRawData('schools')"
+                            class="px-4 py-2 bg-indigo-600 rounded-lg text-xs font-bold">بيانات المدارس</button>
+                        <button onclick="renderRawData('supervisors')"
+                            class="px-4 py-2 bg-slate-800 rounded-lg text-xs font-bold">بيانات الموجهين</button>
+                        <button onclick="renderRawData('guidance')"
+                            class="px-4 py-2 bg-slate-800 rounded-lg text-xs font-bold">بيانات التوجيه</button>
+                    </div>
+
+                    <div class="overflow-x-auto max-h-[600px]">
+                        <table class="w-full text-right text-xs">
+                            <thead id="rawTitle" class="bg-slate-900 sticky top-0">
+                                <!-- Headers injected here -->
+                            </thead>
+                            <tbody id="rawBody" class="divide-y divide-white/5">
+                                <!-- Data injected here -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <!-- Global Loading Overlay -->
+    <div id="globalLoader"
+        class="hidden fixed inset-0 bg-slate-950/80 backdrop-blur-md z-[100] flex items-center justify-center">
+        <div class="text-center">
+            <div class="loading-spinner w-16 h-16 border-4 mb-6 mx-auto"></div>
+            <p id="loaderText" class="text-indigo-400 font-black tracking-widest text-lg animate-pulse">جاري معالجة
+                البيانات...</p>
+        </div>
+    </div>
+
+    <!-- Notification Toast -->
+    <div id="toast"
+        class="fixed bottom-10 left-10 translate-y-10 opacity-0 pointer-events-none transition-all duration-500 z-[100] px-6 py-4 rounded-2xl bg-slate-800 border border-indigo-500 shadow-2xl flex items-center gap-3">
+        <div id="toastIcon" class="text-indigo-400"></div>
+        <p id="toastMsg" class="font-bold text-sm"></p>
+    </div>
+
+    <!-- Global Print Container -->
+    <div id="printReportContainer"></div>
+
+    <script src="script.js"></script>
+</body>
+
+</html>

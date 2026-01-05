@@ -1,0 +1,286 @@
+:root {
+    --primary: #6366f1;
+    --primary-dark: #4f46e5;
+    --bg-dark: #0f172a;
+    --card-bg: rgba(30, 41, 59, 0.7);
+}
+
+body {
+    font-family: 'Cairo', sans-serif;
+    background: radial-gradient(circle at top right, #1e293b, #0f172a);
+    color: #f8fafc;
+    min-height: 100vh;
+}
+
+.glass {
+    background: var(--card-bg);
+    backdrop-filter: blur(12px);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.btn-premium {
+    background: linear-gradient(135deg, var(--primary), var(--primary-dark));
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    box-shadow: 0 4px 15px rgba(79, 70, 229, 0.4);
+}
+
+.btn-premium:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 25px rgba(79, 70, 229, 0.5);
+}
+
+.input-premium {
+    background: rgba(15, 23, 42, 0.6);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    transition: all 0.3s ease;
+}
+
+.input-premium:focus {
+    border-color: var(--primary);
+    outline: none;
+    box-shadow: 0 0 0 4px rgba(99, 102, 241, 0.1);
+}
+
+/* Ensure dropdown options are readable */
+select option {
+    background-color: #0f172a;
+    color: #f8fafc;
+    padding: 10px;
+}
+
+.loading-spinner {
+    border: 3px solid rgba(255, 255, 255, 0.1);
+    border-top: 3px solid var(--primary);
+    border-radius: 50%;
+    width: 24px;
+    height: 24px;
+    animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+    0% {
+        transform: rotate(0deg);
+    }
+
+    100% {
+        transform: rotate(360deg);
+    }
+}
+
+.tab-active {
+    color: #fff;
+    background: var(--primary);
+}
+
+.specialty-badge {
+    background: linear-gradient(135deg, #fbbf24, #d97706);
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+    width: 8px;
+}
+
+::-webkit-scrollbar-track {
+    background: #0f172a;
+}
+
+::-webkit-scrollbar-thumb {
+    background: #334155;
+    border-radius: 10px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: #475569;
+}
+
+/* Print Styles */
+@media print {
+    body {
+        background: white !important;
+        color: black !important;
+        padding: 0 !important;
+    }
+
+    nav,
+    .btn-premium,
+    #adminSearch,
+    .bg-indigo-950\/40,
+    .border-t,
+    .no-print,
+    .btn-quick-add {
+        display: none !important;
+    }
+
+    .glass {
+        background: transparent !important;
+        border: none !important;
+        backdrop-filter: none !important;
+        box-shadow: none !important;
+    }
+
+    .max-w-7xl {
+        max-width: 100% !important;
+        margin: 0 !important;
+    }
+
+    table {
+        border: 1px solid #ddd !important;
+        width: 100% !important;
+    }
+
+    th,
+    td {
+        border: 1px solid #ddd !important;
+        color: black !important;
+    }
+
+    select {
+        appearance: none !important;
+        -webkit-appearance: none !important;
+        border: none !important;
+        background: transparent !important;
+        padding: 0 !important;
+        width: auto !important;
+    }
+
+    .text-slate-400,
+    .text-indigo-300,
+    .text-slate-500 {
+        color: black !important;
+    }
+
+    .print-header {
+        display: block !important;
+        text-align: center;
+        margin-bottom: 30px;
+        border-bottom: 2px solid #000;
+        padding-bottom: 10px;
+    }
+
+    h4 {
+        font-size: 1.5rem !important;
+        margin-bottom: 20px !important;
+    }
+
+    /* --- Official Reports Styling --- */
+    .report-page {
+        background: white;
+        color: black;
+        padding: 0.8cm;
+        /* Reduced margins */
+        min-height: 29.7cm;
+        width: 21cm;
+        margin: 0 auto;
+        font-family: 'Cairo', sans-serif;
+        line-height: 1.4;
+        border: 4px double #000;
+        /* Added Frame (Border) */
+        box-sizing: border-box;
+        position: relative;
+    }
+
+    .report-header {
+        display: flex;
+        justify-content: space-between;
+        margin-bottom: 20px;
+        border-bottom: 1.5px solid #000;
+        padding-bottom: 8px;
+    }
+
+    .report-header p {
+        margin: 2px 0;
+        font-size: 0.95rem;
+        font-weight: bold;
+    }
+
+    .report-title-box {
+        text-align: center;
+        border: 2px solid #000;
+        padding: 8px 15px;
+        font-weight: 900;
+        font-size: 1.1rem;
+        background: #f8f9fa;
+        align-self: center;
+    }
+
+    .official-table {
+        width: 100%;
+        border-collapse: collapse;
+        margin: 15px 0;
+    }
+
+    .official-table th,
+    .official-table td {
+        border: 1px solid #000;
+        padding: 6px;
+        text-align: center;
+        font-size: 0.95rem;
+        /* Larger font for grouped sheet */
+    }
+
+    .official-table th {
+        background: #f1f1f1;
+        font-size: 0.9rem;
+    }
+
+    .instructions-list {
+        text-align: right;
+        margin: 15px 0;
+        padding-right: 25px;
+        list-style-type: decimal;
+    }
+
+    .instructions-list li {
+        margin-bottom: 6px;
+        font-size: 0.9rem;
+        /* Slightly larger for clarity */
+    }
+
+    .signature-section {
+        display: flex;
+        justify-content: flex-end;
+        /* Align to left (Arabic right) */
+        margin-top: 30px;
+        text-align: center;
+    }
+
+    .signature-block {
+        width: 250px;
+    }
+
+    .page-break {
+        page-break-after: always;
+    }
+
+    #printReportContainer {
+        display: block !important;
+        position: absolute;
+        left: 0;
+        top: 0;
+        width: 100%;
+    }
+
+    .no-print {
+        display: none !important;
+    }
+}
+
+#printReportContainer {
+    display: none;
+}
+
+@media print {
+    body * {
+        visibility: hidden;
+    }
+
+    #printReportContainer,
+    #printReportContainer * {
+        visibility: visible;
+    }
+}
+
+.print-header {
+    display: none;
+}
