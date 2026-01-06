@@ -594,31 +594,125 @@ function runDistribution() {
 
 function manualOverride(schoolId, supName) {
     const row = DATA.final.find(s => getVal(s, 'كود المدرسة') == schoolId);
-    if (row) {
-        if (!supName) {
-            row.finalSup = null;
-            row.finalSupCode = null;
-            row.method = 'تعديل إداري (إلغاء)';
-        } else {
-            // Lookup supervisor details
-            const supObj = DATA.supervisors.find(su => getVal(su, 'اسم الموجه') === supName);
-            row.finalSup = supName;
-            row.finalSupCode = supObj ? getVal(supObj, 'كود الموجه') : '';
-            row.method = 'تعديل إداري';
+    if (!row) return;
 
-            // Auto-fix guidance if missing from school
-            if (!getVal(row, 'كود التوجيه') && !getVal(row, 'التوجيه') && supObj) {
-                const supGuidCode = getVal(supObj, 'كود التوجيه');
-                // We create a temporary property or update existing if possible
-                if (supGuidCode) row['كود التوجيه'] = supGuidCode;
+    if (supName) {
+        // Check for conflict
+        const existingAssignment = DATA.final.find(s => s.finalSup === supName && getVal(s, 'كود المدرسة') != schoolId);
+        if (existingAssignment) {
+            const confirmMsg = `⚠️ تنبيه: هذه الموجه (${supName}) مسكن بالفعل في مدرسة:\n"${getVal(existingAssignment, 'اسم المدرسة')}"\n\nهل تريد نقله لهذه المدرسة وإلغاء المدرسة السابقة؟`;
+            if (!confirm(confirmMsg)) {
+                renderAdminTable(); // Reset select
+                return;
             }
+            // Clear previous assignment
+            existingAssignment.finalSup = null;
+            existingAssignment.finalSupCode = null;
+            existingAssignment.method = 'تعديل إداري (نقل)';
+        }
+    }
+
+    if (!supName) {
+        row.finalSup = null;
+        row.finalSupCode = null;
+        row.method = 'تعديل إداري (إلغاء)';
+    } else {
+        // Lookup supervisor details
+        const supObj = DATA.supervisors.find(su => getVal(su, 'اسم الموجه') === supName);
+        row.finalSup = supName;
+        row.finalSupCode = supObj ? getVal(supObj, 'كود الموجه') : '';
+        row.method = 'تعديل إداري';
+
+        // Auto-fix guidance if missing from school
+        if (!getVal(row, 'كود التوجيه') && !getVal(row, 'التوجيه') && supObj) {
+            const supGuidCode = getVal(supObj, 'كود التوجيه');
+            // We create a temporary property or update existing if possible
+            if (supGuidCode) row['كود التوجيه'] = supGuidCode;
+        }
+    }
+
+    updateDashboard();
+    renderAdminTable();
+    showToast("تم تحديث الجدول .. جاري الحفظ", "✍️");
+    autoSaveDistribution();
+}
+
+// ... (Functions in between)
+
+function renderAdminTable() {
+    const body = document.getElementById('resultBody');
+    if (!body) return;
+
+    if (!DATA.final || DATA.final.length === 0) {
+        body.innerHTML = '<tr><td colspan="6" class="px-8 py-8 text-center text-slate-500">لا توجد نتائج للتوزيع بعد. يرجى الضغط على زر "توزيع وإصلاح" لبدء العملية.</td></tr>';
+        return;
+    }
+
+    // Create a map of current assignments for the dropdown
+    const assignmentMap = {};
+    DATA.final.forEach(s => {
+        if (s.finalSup) assignmentMap[s.finalSup] = getVal(s, 'اسم المدرسة');
+    });
+
+    body.innerHTML = DATA.final.map(s => {
+        const schoolCode = getVal(s, 'كود المدرسة');
+        let guidCode = getVal(s, 'كود التوجيه') || getVal(s, 'التوجيه') || getVal(s, 'الإدارة') || getVal(s, 'الادارة');
+
+        if (!guidCode && s.finalSupCode) {
+            const assignedSup = DATA.supervisors.find(sx => getVal(sx, 'كود التوجيه') == s.finalSupCode);
+            if (assignedSup) guidCode = getVal(assignedSup, 'كود التوجيه') || getVal(assignedSup, 'التوجيه');
         }
 
-        updateDashboard();
-        renderAdminTable();
-        showToast("تم تحديث الجدول .. جاري الحفظ", "✍️");
-        autoSaveDistribution();
-    }
+        const gName = getGuidanceName(guidCode);
+
+        // Badge Logic...
+        const method = s.method || 'تلقائي';
+        let badgeStyle = "bg-slate-800 text-slate-400";
+        if (method.includes('إجباري') || method.includes('الملف')) badgeStyle = "bg-rose-500/20 text-rose-400 border border-rose-500/30";
+        else if (method.includes('رغبة')) badgeStyle = "bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 font-bold";
+        else if (method.includes('تعديل')) badgeStyle = "bg-amber-500/20 text-amber-400 border border-amber-500/30";
+
+        return `
+        <tr class="hover:bg-white/5 transition-colors">
+            <td class="px-8 py-5 font-bold">${getVal(s, 'اسم المدرسة')}</td>
+            <td class="px-8 py-5">
+                <select onchange="manualOverride('${schoolCode}', this.value)" 
+                        class="bg-slate-900 border border-white/10 rounded-lg px-3 py-1 text-sm w-full focus:bg-slate-800 focus:border-indigo-500 outline-none">
+                    <option value="">-- غير مسكن --</option>
+                    ${DATA.supervisors
+                .filter(sup => {
+                    const status = (getVal(sup, 'الحالة') || getVal(sup, 'نشط') || 'نشط').trim();
+                    return status !== 'غير نشط' && status !== '0';
+                })
+                .map(sup => {
+                    const supName = getVal(sup, 'اسم الموجه');
+                    const assignedSchool = assignmentMap[supName];
+                    const isCurrent = s.finalSup === supName;
+
+                    let label = supName;
+                    if (assignedSchool && !isCurrent) label += ` (⛔ ${assignedSchool})`; // Mark if taken
+
+                    return `<option value="${supName}" ${isCurrent ? 'selected' : ''} ${assignedSchool && !isCurrent ? 'class="text-rose-400 bg-rose-900/20"' : ''}>${label}</option>`;
+                }).join('')}
+                </select>
+            </td>
+            <td class="px-8 py-5 text-slate-400 font-mono text-xs">${gName}</td>
+            <td class="px-8 py-5 text-indigo-300 text-xs">${getVal(s, 'المرحلة')}</td>
+            <td class="px-8 py-5 text-[10px] font-bold">
+                <span class="px-2 py-1 rounded ${badgeStyle}">${method}</span>
+            </td>
+            <td class="px-8 py-5 text-center">
+                <button onclick="generateIndividualLetters('${schoolCode}')" 
+                        class="p-2 hover:bg-white/10 rounded-lg text-amber-500 transition-colors" title="طباعة الخطاب">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" 
+                              d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z" />
+                    </svg>
+                </button>
+            </td>
+        </tr>
+        `;
+    }).join('');
 }
 
 async function autoSaveDistribution() {
@@ -1004,9 +1098,11 @@ function switchAdminTab(tabId) {
     if (tabId === 'status') {
         renderStatusTable();
     } else if (tabId === 'data') {
-        renderRawData('schools'); // Default to schools view
+        renderManagementTable('schools');
     } else if (tabId === 'results') {
         renderAdminTable();
+    } else if (tabId === 'mandatory') {
+        renderMandatoryTable();
     }
 }
 
@@ -1401,7 +1497,7 @@ function generateOfficialGeneralReport() {
                     <td style="text-align:right">${getVal(s, 'اسم المدرسة')}</td>
                     <td>${s.finalSup || '-'}</td>
                     <td>${phone}</td>
-                    <td style="width:100px"></td>
+                    <td></td>
                 </tr>
             `;
         }).join('');
@@ -1605,9 +1701,14 @@ function generateIndividualLetters(specificSchoolCode = null) {
                     <p style="margin-top:25px;">................................</p>
                 </div>
                 <div style="text-align:center; width:200px;">
+                    <p style="font-weight:bold;">وكيل الإدارة</p>
+                    <br>
+                    <p style="font-weight:bold; font-size:1.1rem;">${OFFICIALS.deputy.name}</p>
+                </div>
+                <div style="text-align:center; width:200px;">
                     <p style="font-weight:bold;">مدير عام الإدارة</p>
                     <br>
-                    <p style="font-weight:bold; font-size:1.1rem;">أ / سعاد محمد</p>
+                    <p style="font-weight:bold; font-size:1.1rem;">${OFFICIALS.gm.name}</p>
                 </div>
             </div>
         </div>
@@ -1748,9 +1849,14 @@ function generateBlankLetter() {
                     <p style="margin-top:25px;">................................</p>
                 </div>
                 <div style="text-align:center; width:200px;">
+                    <p style="font-weight:bold;">وكيل الإدارة</p>
+                    <br>
+                    <p style="font-weight:bold; font-size:1.1rem;">${OFFICIALS.deputy.name}</p>
+                </div>
+                <div style="text-align:center; width:200px;">
                     <p style="font-weight:bold;">مدير عام الإدارة</p>
                     <br>
-                    <p style="font-weight:bold; font-size:1.1rem;">أ / سعاد محمد</p>
+                    <p style="font-weight:bold; font-size:1.1rem;">${OFFICIALS.gm.name}</p>
                 </div>
             </div>
         </div>
@@ -2351,16 +2457,19 @@ async function saveMgmtRecord() {
             payload.schoolCode = formData['كود المدرسة'];
             payload.guidanceCode = formData['كود التوجيه'];
             payload.stage = formData['المرحلة'];
-            payload.type = 'school'; // Force singular for legacy add block
+            payload.schoolType = formData['النوعية']; // Added
+            payload.type = 'school';
         } else if (currentMgmtType === 'supervisors') {
             payload.supName = formData['اسم الموجه'];
             payload.supCode = formData['كود الموجه'];
             payload.guidanceCode = formData['كود التوجيه'];
             payload.status = formData['الحالة'];
+            payload.specialty = formData['التخصص']; // Added
             payload.type = 'supervisor';
         } else if (currentMgmtType === 'guidance') {
             payload.guidanceName = formData['اسم التوجيه'];
             payload.guidanceCode = formData['كود التوجيه'];
+            payload.password = formData['الباسوورد']; // Added
             payload.type = 'guidance';
         }
     }
