@@ -539,12 +539,12 @@ function runDistribution() {
 
                 const supGuid = String(getVal(sup, 'كود التوجيه') || getVal(sup, 'التوجيه') || '0').trim();
                 const isSpecialtyMatch = supGuid === guidCode;
-                const populationPenalty = (guidancePop[supGuid] || 0) * 2; // Bias: Larger depts = Higher Score = Picked Last
 
-                let score = (totalLoad * 500) + (stageLoad * 50) + (typeLoad * 25) + populationPenalty;
-                if (!isSpecialtyMatch) score += 2000; // Prioritize specialty match above all else
+                // General Balanced Scoring
+                let score = (totalLoad * 500) + (stageLoad * 50) + (typeLoad * 25);
+                if (!isSpecialtyMatch) score += 2000; // Priority to specialty match
 
-                return score + (Math.random() * 10); // Tiny jitter to break exact ties
+                return score + (Math.random() * 50); // General jitter
             }
 
             const candidates = activeSups
@@ -2008,6 +2008,104 @@ function generateUnifiedReport() {
     `;
 
     printWindow.document.write(`<html><head><title>الكشف الموحد</title>${css}</head><body>${fullHtml}</body></html>`);
+    printWindow.document.close();
+    printWindow.onload = () => { setTimeout(() => { printWindow.print(); }, 500); };
+}
+
+function generateUnassignedSchoolsReport() {
+    // 1. Filter Unassigned Schools
+    const unassignedSchools = DATA.final.filter(s => !s.finalSup);
+
+    if (unassignedSchools.length === 0) return showToast("جميع المدارس تم توزيعها بنجاح! 👏", "success");
+
+    // 2. Sort by Stage & Name
+    unassignedSchools.sort((a, b) => {
+        const sA = getVal(a, 'المرحلة') || '';
+        const sB = getVal(b, 'المرحلة') || '';
+        if (sA !== sB) return sA.localeCompare(sB, 'ar');
+        return String(getVal(a, 'اسم المدرسة')).localeCompare(String(getVal(b, 'اسم المدرسة')), 'ar');
+    });
+
+    // 3. Generate Rows
+    const rowsHtml = unassignedSchools.map((s, idx) => `
+        <tr>
+            <td>${idx + 1}</td>
+            <td style="text-align:right;">${getVal(s, 'اسم المدرسة')}</td>
+            <td>${getVal(s, 'المرحلة')}</td>
+            <td>${getVal(s, 'النوعية')}</td>
+            <td>${getGuidanceName(getVal(s, 'كود التوجيه') || getVal(s, 'التوجيه'))}</td>
+        </tr>
+    `).join('');
+
+    const fullHtml = `
+        <div class="report-page">
+            <div class="report-header">
+                <div style="text-align:right">
+                    <p style="font-weight:900; font-size:14px;">محافظة الجيزة</p>
+                    <p style="font-weight:900; font-size:14px;">إدارة العمرانية التعليمية</p>
+                    <p style="font-size:11px; margin-top:3px;">تاريخ: ${new Date().toLocaleDateString('ar-EG')}</p>
+                </div>
+                <div class="report-title-box" style="flex:1; margin:0 15px;">
+                    <div style="font-weight:900; font-size:16px;">تقرير العجز (مدارس بلا موجهين)</div>
+                    <div style="font-size:13px; margin-top:3px; font-weight:normal;">بيان بالمدارس التي لم يتم تسكين موجه مقيم لها</div>
+                </div>
+                <div style="text-align:left">
+                    <div style="width:70px; height:70px; border:2px solid #000; display:flex; align-items:center; justify-content:center; font-weight:bold; font-size:10px; background:#f8f9fa;">
+                         <img src="logo.png" style="width:100%; height:100%; object-fit:contain;" alt="شعار الإدارة">
+                    </div>
+                </div>
+            </div>
+
+            <div style="margin:20px 0; padding:10px; background:#ffebeb; border:1px solid #ffcccc; text-align:center; color:#c00;">
+                <strong>إجمالي العجز: ${unassignedSchools.length} مدرسة</strong>
+            </div>
+
+            <table class="official-table">
+                <thead>
+                    <tr style="background:#e9ecef;">
+                        <th style="width:50px;">م</th>
+                        <th>اسم المدرسة</th>
+                        <th>المرحلة</th>
+                        <th>النوعية</th>
+                        <th>التوجيه المطلوب</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${rowsHtml}
+                </tbody>
+            </table>
+            
+             <div class="signature-block">
+                <p style="font-weight:bold; margin-bottom:5px;">يعتمد،،</p>
+                <p style="font-weight:900; font-size:1.1rem; margin:3px 0;">مدير عام الإدارة</p>
+                <p style="font-weight:bold; font-size:1.05rem; margin-top:8px;">${OFFICIALS.gm.name}</p>
+            </div>
+        </div>
+    `;
+
+    // Print
+    const printWindow = window.open('', '_blank', 'width=1000,height=800');
+    if (!printWindow) return showToast("يرجى السماح بالنوافذ المنبثقة", "⚠️");
+
+    const css = `
+        <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;900&display=swap" rel="stylesheet">
+        <style>
+            body { font-family: 'Cairo', sans-serif; direction: rtl; padding: 20px; }
+            .report-page { page-break-after: always; min-height: 100vh; position: relative; }
+            .report-header { display: flex; justify-content: space-between; border-bottom: 2px solid #000; padding-bottom: 10px; margin-bottom: 15px; }
+            .report-title-box { text-align: center; border: 2px solid #000; padding: 5px; border-radius: 8px; }
+            .official-table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 11px; }
+            .official-table th, .official-table td { border: 1px solid #000; padding: 4px 6px; text-align: center; }
+            .signature-block { text-align: center; margin-top: 30px; }
+            @media print {
+                @page { size: A4; margin: 0.5cm; }
+                body { margin: 0; padding: 0; }
+                .no-print { display: none; }
+            }
+        </style>
+    `;
+
+    printWindow.document.write(`<html><head><title>تقرير العجز</title>${css}</head><body>${fullHtml}</body></html>`);
     printWindow.document.close();
     printWindow.onload = () => { setTimeout(() => { printWindow.print(); }, 500); };
 }

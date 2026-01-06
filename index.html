@@ -589,39 +589,46 @@
                                 <span id="resCoverage">تغطية: 0%</span>
                             </div>
                         </div>
-                        <div class="flex gap-3 items-center">
+                        <div class="grid grid-cols-4 gap-3 items-center w-full">
+                            <!-- Row 1: Actions & Main Reports -->
                             <button onclick="runDistribution(); showToast('تم بدء التوزيع وتحديث البيانات', '🚀')"
-                                class="bg-indigo-600 hover:bg-indigo-500 text-white px-6 py-3 rounded-xl text-xs font-bold flex items-center gap-2 whitespace-nowrap shadow-lg shadow-indigo-900/50 border border-indigo-400/30">
-                                ⚡ توزيع وإصلاح (تحديث شامل)
+                                class="bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-3 rounded-xl text-xs font-bold flex items-center justify-center gap-2 shadow-lg shadow-indigo-900/50 border border-indigo-400/30">
+                                ⚡ توزيع وإصلاح
                             </button>
-                            <div class="w-px h-8 bg-white/10 mx-2"></div>
-                            <button onclick="exportToCSV()"
-                                class="bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-3 rounded-xl text-xs font-bold flex items-center gap-2 whitespace-nowrap">
-                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                                        d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-                                </svg>
-                                تصدير CSV
-                            </button>
-                            <button onclick="generateOfficialGeneralReport()"
-                                class="bg-emerald-600 hover:bg-emerald-700 text-white px-6 py-3 rounded-xl text-xs font-bold flex items-center gap-2 whitespace-nowrap no-print">
-                                📋 الكشف العام
-                            </button>
+
                             <button onclick="generateUnifiedReport()"
-                                class="bg-teal-600 hover:bg-teal-700 text-white px-6 py-3 rounded-xl text-xs font-bold flex items-center gap-2 whitespace-nowrap no-print">
-                                📑 جدول واحد
+                                class="bg-teal-600 hover:bg-teal-700 text-white px-4 py-3 rounded-xl text-xs font-bold flex items-center justify-center gap-2">
+                                📑 جدول واحد (مجمع)
                             </button>
+
                             <button onclick="generateIndividualLetters()"
-                                class="bg-amber-600 hover:bg-amber-700 text-white px-6 py-3 rounded-xl text-xs font-bold flex items-center gap-2 whitespace-nowrap no-print">
+                                class="bg-amber-600 hover:bg-amber-700 text-white px-4 py-3 rounded-xl text-xs font-bold flex items-center justify-center gap-2">
                                 ✉️ خطابات التكليف
                             </button>
-                            <!-- New Reports -->
+
+                            <button onclick="exportToCSV()"
+                                class="bg-slate-600 hover:bg-slate-700 text-white px-4 py-3 rounded-xl text-xs font-bold flex items-center justify-center gap-2">
+                                📥 تصدير CSV
+                            </button>
+
+                            <!-- Row 2: Secondary Reports -->
+                            <button onclick="generateOfficialGeneralReport()"
+                                class="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-3 rounded-xl text-xs font-bold flex items-center justify-center gap-2">
+                                📋 الكشف العام (مقسم)
+                            </button>
+
                             <button onclick="generateUnassignedReport()"
-                                class="bg-rose-600 hover:bg-rose-700 text-white px-6 py-3 rounded-xl text-xs font-bold flex items-center gap-2 whitespace-nowrap no-print">
+                                class="bg-rose-600 hover:bg-rose-700 text-white px-4 py-3 rounded-xl text-xs font-bold flex items-center justify-center gap-2">
                                 ⚠️ غير الموزعين
                             </button>
+
+                            <button onclick="generateUnassignedSchoolsReport()"
+                                class="bg-orange-600 hover:bg-orange-700 text-white px-4 py-3 rounded-xl text-xs font-bold flex items-center justify-center gap-2">
+                                🏫 مدارس بلا توزيع
+                            </button>
+
                             <button onclick="generateBlankLetter()"
-                                class="bg-slate-600 hover:bg-slate-700 text-white px-6 py-3 rounded-xl text-xs font-bold flex items-center gap-2 whitespace-nowrap no-print">
+                                class="bg-gray-500 hover:bg-gray-600 text-white px-4 py-3 rounded-xl text-xs font-bold flex items-center justify-center gap-2">
                                 📝 خطاب فارغ
                             </button>
                         </div>
