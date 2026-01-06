@@ -8,6 +8,10 @@ let DATA = {
     activeUser: null
 };
 
+// Authentication & Security
+const ADMIN_PASSWORD = 'admin2026'; // يمكن تغييره من هنا
+let isAdminAuthenticated = sessionStorage.getItem('adminAuth') === 'true';
+
 // Default Configuration
 const CONFIG = {
     defaultSheetId: localStorage.getItem('sheetId') || '1CuCtGc5uCx-6F-gtSY5gdmbmMOsJQscS_VQhP2QRSw8',
@@ -36,6 +40,12 @@ window.addEventListener('DOMContentLoaded', async () => {
 // --- Navigation ---
 
 function navigate(tab) {
+    // Check admin authentication
+    if (tab === 'admin' && !isAdminAuthenticated) {
+        showAdminLogin();
+        return;
+    }
+
     document.getElementById('view-supervisor').classList.toggle('hidden', tab !== 'supervisor');
     document.getElementById('view-admin').classList.toggle('hidden', tab !== 'admin');
 
@@ -62,8 +72,40 @@ function navigate(tab) {
     }
 }
 
+// --- Admin Authentication ---
+function showAdminLogin() {
+    const modal = document.getElementById('adminLoginModal');
+    if (modal) {
+        modal.classList.remove('hidden');
+        document.getElementById('adminPasswordInput').value = '';
+        document.getElementById('adminPasswordInput').focus();
+    }
+}
+
+function verifyAdminLogin() {
+    const password = document.getElementById('adminPasswordInput').value.trim();
+
+    if (password === ADMIN_PASSWORD) {
+        isAdminAuthenticated = true;
+        sessionStorage.setItem('adminAuth', 'true');
+        document.getElementById('adminLoginModal').classList.add('hidden');
+        navigate('admin');
+        showToast('مرحباً بك في لوحة الإدارة', '✅');
+    } else {
+        showToast('كلمة المرور غير صحيحة', '❌');
+        document.getElementById('adminPasswordInput').value = '';
+    }
+}
+
+function adminLogout() {
+    isAdminAuthenticated = false;
+    sessionStorage.removeItem('adminAuth');
+    navigate('supervisor');
+    showToast('تم تسجيل الخروج من لوحة الإدارة', 'ℹ️');
+}
+
 function switchAdminTab(tab) {
-    const views = ['sync', 'mandatory', 'results', 'raw'];
+    const views = ['sync', 'data', 'mandatory', 'results', 'raw'];
     views.forEach(v => {
         const viewEl = document.getElementById(`admin-view-${v}`);
         if (viewEl) viewEl.classList.toggle('hidden', v !== tab);
@@ -79,14 +121,17 @@ function switchAdminTab(tab) {
 
     if (tab === 'raw') renderRawData('schools');
     if (tab === 'mandatory') renderMandatoryTable();
+    if (tab === 'data') renderManagementTable('schools');
 }
 
 // --- Data Fetching ---
 
 function getVal(obj, key) {
     if (!obj) return '';
-    // Smart matching for keys with spaces or different casing
-    const foundKey = Object.keys(obj).find(k => k.trim().toLowerCase() === key.trim().toLowerCase());
+    // Normalize: remove all spaces, underscores, dashes, dots, and convert to lowercase
+    const normalize = (s) => String(s).replace(/[\s_\-\.]/g, '').toLowerCase();
+    const target = normalize(key);
+    const foundKey = Object.keys(obj).find(k => normalize(k) === target);
     return foundKey ? obj[foundKey] : '';
 }
 
@@ -101,6 +146,15 @@ function getGuidanceName(guidCode) {
     if (!guidObj) return guidCode;
     const name = getVal(guidObj, 'التوجيه') || getVal(guidObj, 'اسم التوجيه');
     return name ? `${name} (${sCode})` : sCode;
+}
+
+// --- Supervisor Availability Check ---
+function isSupervisorAvailable(supervisor) {
+    const status = (getVal(supervisor, 'الحالة') ||
+        getVal(supervisor, 'متاح') ||
+        getVal(supervisor, 'نشط') ||
+        'متاح').trim().toLowerCase();
+    return status !== 'غير متاح' && status !== 'غير نشط' && status !== '0';
 }
 
 async function fetchCSV(sheetId, tabName) {
@@ -178,7 +232,6 @@ async function loadDataFromServer(sheetId) {
             DATA.wishes = d.wishes || [];
             DATA.mandatory = d.mandatory || [];
 
-            // Restore mandatory assignments to school objects
             if (DATA.mandatory.length > 0) {
                 DATA.mandatory.forEach(m => {
                     const sCode = String(getVal(m, 'كود المدرسة')).trim();
@@ -187,6 +240,30 @@ async function loadDataFromServer(sheetId) {
                     if (school) school._mandatorySup = supName;
                 });
                 log(`تم استعادة ${DATA.mandatory.length} تكليف إجباري`, "success");
+            }
+
+            // Restore Final Distribution Results
+            if (d.finalResults && d.finalResults.length > 0) {
+                DATA.final = DATA.schools.map(s => {
+                    const sCode = String(getVal(s, 'كود المدرسة')).trim();
+                    const result = d.finalResults.find(r => String(getVal(r, 'كود المدرسة')).trim() === sCode);
+                    if (result) {
+                        return {
+                            ...s,
+                            finalSup: result['اسم الموجه'],
+                            finalSupCode: result['كود الموجه'],
+                            method: result['آلية التوزيع'] || 'محفوظ',
+                            // Restore guidance name if missing in school original data
+                            'التوجيه': getVal(s, 'التوجيه') || getVal(s, 'كود التوجيه') || result['التوجيه']
+                        };
+                    }
+                    return { ...s };
+                });
+                log(`تم استعادة توزيع ${d.finalResults.length} مدرسة من الشيت`, "success");
+                renderAdminTable();
+                updateDashboard();
+            } else {
+                DATA.final = []; // Reset if no results found
             }
 
             log(`تم الاتصال بنجاح بملف: ${result.sheetName}`, "success");
@@ -216,7 +293,21 @@ async function loadDataFromServer(sheetId) {
     }
 }
 
+// Explicitly expose functions to window scope for HTML triggers
+window.syncAllData = syncAllData;
+window.runDistribution = runDistribution;
+window.saveMandatoryAssignments = saveMandatoryAssignments;
+window.switchAdminTab = switchAdminTab;
+window.renderManagementTable = renderManagementTable;
+window.openAddModal = openAddModal;
+window.editRecord = editRecord;
+window.deleteRecord = deleteRecord;
+window.saveMgmtRecord = saveMgmtRecord;
+window.closeModal = closeModal;
+window.manualOverride = manualOverride;
+
 async function syncAllData() {
+    console.log("Starting syncAllData...");
     let sheetId = document.getElementById('sheetId').value.trim();
     const gasUrl = document.getElementById('gasUrl').value.trim();
 
@@ -236,12 +327,13 @@ async function syncAllData() {
         const success = await loadDataFromServer(sheetId);
         if (success) {
             renderMandatoryTable();
-            runDistribution();
+            // runDistribution(); // Don't auto-run on sync, let user decide based on data
             updateDashboard();
             switchAdminTab('results');
             showToast(`تم مزامنة البيانات بنجاح`, "✅");
         }
     } catch (error) {
+        console.error("Sync Error:", error);
         showToast("خطأ في المزامنة: " + error.message, "❌");
     } finally {
         toggleLoader(false);
@@ -259,158 +351,307 @@ function updateSchoolMandatory(schoolId, supName) {
 }
 
 function runDistribution() {
-    console.log("Starting Advanced Heuristic Distribution...");
-
-    const activeSups = DATA.supervisors.filter(sup => {
-        const status = (getVal(sup, 'الحالة') || getVal(sup, 'نشط') || 'نشط').trim();
-        return status !== 'غير نشط' && status !== '0';
-    });
-
-    // Advanced Tracking
-    const supervisorLoad = {};
-    const supervisorStageLoad = {};
-    const supervisorTypeLoad = {};
-
-    activeSups.forEach(s => {
-        const code = String(getVal(s, 'كود الموجه')).trim();
-        supervisorLoad[code] = 0;
-        supervisorStageLoad[code] = {};
-        supervisorTypeLoad[code] = {};
-    });
-
-    function incrementLoad(supCode, stage, type) {
-        if (!supCode || supervisorLoad[supCode] === undefined) return;
-        supervisorLoad[supCode]++;
-        if (stage) supervisorStageLoad[supCode][stage] = (supervisorStageLoad[supCode][stage] || 0) + 1;
-        if (type) supervisorTypeLoad[supCode][type] = (supervisorTypeLoad[supCode][type] || 0) + 1;
+    // Password Protection
+    const pass = prompt("⚠️ تنبيه: إعادة التوزيع ستقوم بتغيير التسكين الحالي.\n\nالرجاء إدخال كلمة مرور المسؤول للمتابعة:", "");
+    if (pass !== "123456") {
+        if (pass !== null) showToast("كلمة المرور غير صحيحة ❌", "error");
+        return;
     }
 
-    // Pass 1: Mandatory & Locks (Fixed Assignments)
-    DATA.final = DATA.schools.map(s => {
-        const schoolId = String(getVal(s, 'كود المدرسة')).trim();
-        const existing = (DATA.final && DATA.final.length > 0) ? DATA.final.find(f => String(getVal(f, 'كود المدرسة')).trim() === schoolId) : null;
-        const isLocked = existing && existing.method === 'تعديل إداري';
-        const mandatorySupName = s._mandatorySup || null;
-
-        let finalSup = isLocked ? existing.finalSup : (mandatorySupName || null);
-        let finalSupCode = isLocked ? (existing.finalSupCode || '') : '';
-        let method = isLocked ? 'تعديل إداري' : (mandatorySupName ? 'تكليف إداري (إجباري)' : 'تلقائي');
-
-        if (mandatorySupName && !isLocked) {
-            const ms = activeSups.find(sup => getVal(sup, 'اسم الموجه') == mandatorySupName);
-            if (ms) finalSupCode = String(getVal(ms, 'كود الموجه')).trim();
+    console.log("Triggering runDistribution...");
+    try {
+        if (!DATA.schools || DATA.schools.length === 0) {
+            showToast("لا توجد بيانات مدارس! يرجى المزامنة أولاً.", "⚠️");
+            return;
         }
 
-        if (!finalSup) {
-            const sheetSupCode = String(getVal(s, 'كود الموجه')).trim();
-            if (sheetSupCode && supervisorLoad[sheetSupCode] !== undefined) {
-                const sheetSup = activeSups.find(sup => String(getVal(sup, 'كود الموجه')).trim() === sheetSupCode);
-                if (sheetSup) {
-                    finalSup = getVal(sheetSup, 'اسم الموجه');
-                    finalSupCode = sheetSupCode;
-                    method = 'تكليف إداري (الملف)';
+        const logBatch = [];
+        const log = (msg) => {
+            console.log(msg);
+            logBatch.push(`[${new Date().toLocaleTimeString()}] ${msg}`);
+        };
+
+        log("=== بدء التحليل المتقدم (Advanced Distribution Analysis) ===");
+
+        const activeSups = DATA.supervisors.filter(sup => isSupervisorAvailable(sup));
+        log(`الموجهين النشطين المتاحين: ${activeSups.length}`);
+
+        if (activeSups.length === 0) {
+            log("تنبيه: لا يوجد موجهين نشطين!. تأكد من ضبط حالة الموجهين.");
+        }
+
+        const supervisorLoad = {};
+        const supervisorStageLoad = {};
+        const supervisorTypeLoad = {};
+
+        activeSups.forEach(s => {
+            const code = String(getVal(s, 'كود الموجه')).trim();
+            supervisorLoad[code] = 0;
+            supervisorStageLoad[code] = {};
+            supervisorTypeLoad[code] = {};
+        });
+
+        const LOAD_LIMIT = 1;
+
+        function incrementLoad(supCode, stage, type) {
+            if (!supCode || supervisorLoad[supCode] === undefined) return;
+            supervisorLoad[supCode]++;
+            if (stage) supervisorStageLoad[supCode][stage] = (supervisorStageLoad[supCode][stage] || 0) + 1;
+            if (type) supervisorTypeLoad[supCode][type] = (supervisorTypeLoad[supCode][type] || 0) + 1;
+        }
+
+        // Pass 1: Mandatory & Persistent Locks
+        DATA.final = DATA.schools.map(s => {
+            const schoolId = String(getVal(s, 'كود المدرسة')).trim();
+            const existing = (DATA.final && DATA.final.length > 0) ? DATA.final.find(f => String(getVal(f, 'كود المدرسة')).trim() === schoolId) : null;
+
+            // Priority 1: Admin manual lock
+            if (existing && existing.method === 'تعديل إداري') {
+                if (existing.finalSupCode) incrementLoad(existing.finalSupCode, getVal(s, 'المرحلة'), getVal(s, 'النوعية'));
+                return existing;
+            }
+
+            // Priority 2: Mandatory (التكليفات الإجبارية)
+            if (s._mandatorySup) {
+                const ms = activeSups.find(sup => getVal(sup, 'اسم الموجه') == s._mandatorySup);
+                if (ms) {
+                    const msCode = String(getVal(ms, 'كود الموجه')).trim();
+                    incrementLoad(msCode, getVal(s, 'المرحلة'), getVal(s, 'النوعية'));
+
+                    // Backfill Guidance
+                    const sCopy = { ...s, finalSup: s._mandatorySup, finalSupCode: msCode, method: 'تكليف إداري (إجباري)' };
+                    if (!getVal(s, 'كود التوجيه') && !getVal(s, 'التوجيه')) {
+                        sCopy['كود التوجيه'] = getVal(ms, 'كود التوجيه');
+                    }
+                    return sCopy;
                 }
             }
+
+            // Priority 3: Fixed Column in Schools Sheet
+            const sheetSupCode = String(getVal(s, 'كود الموجه')).trim();
+            const isValidCode = sheetSupCode && !['0', '-', 'undefined', 'null', ''].includes(sheetSupCode);
+
+            if (isValidCode && supervisorLoad[sheetSupCode] !== undefined) {
+                const sheetSup = activeSups.find(sup => String(getVal(sup, 'كود الموجه')).trim() === sheetSupCode);
+                if (sheetSup && supervisorLoad[sheetSupCode] < LOAD_LIMIT) {
+                    incrementLoad(sheetSupCode, getVal(s, 'المرحلة'), getVal(s, 'النوعية'));
+
+                    // Backfill Guidance
+                    const sCopy = { ...s, finalSup: getVal(sheetSup, 'اسم الموجه'), finalSupCode: sheetSupCode, method: 'تكليف إداري (الملف)' };
+                    if (!getVal(s, 'كود التوجيه') && !getVal(s, 'التوجيه')) {
+                        sCopy['كود التوجيه'] = getVal(sheetSup, 'كود التوجيه');
+                    }
+                    return sCopy;
+                }
+            }
+
+            return { ...s, finalSup: null, finalSupCode: '', method: 'تلقائي' };
+        });
+
+        log(`تم تثبيت التكليفات الإجبارية واليدوية. المدارس المتبقية: ${DATA.final.filter(f => !f.finalSup).length}`);
+
+        // Pass 2: Wishes (Latest per supervisor)
+        const latestWishes = {};
+        if (DATA.wishes && DATA.wishes.length > 0) {
+            DATA.wishes.forEach(w => {
+                // Priority: Detection by name, then fallback by index (0 or 1 for code)
+                const code = String(getVal(w, 'كود الموجه') || Object.values(w)[0] || Object.values(w)[1] || '').trim();
+                if (code && supervisorLoad[code] !== undefined) latestWishes[code] = w;
+            });
         }
 
-        if (finalSupCode) incrementLoad(finalSupCode, getVal(s, 'المرحلة'), getVal(s, 'النوعية'));
-        return { ...s, finalSup, finalSupCode, method };
-    });
+        log(`تم تحليل رغبات ${Object.keys(latestWishes).length} موجهين.`);
+        log(`جاري تطبيق الرغبات (بحد أقصى مدرسة واحدة لكل موجه)...`);
 
-    const LOAD_LIMIT = 5;
+        for (let pass = 1; pass <= 4; pass++) {
+            log(`--- معالجة [الرغبة ${pass}] لجميع الموجهين المتاحين ---`);
+            const shuffledSups = [...activeSups].sort(() => Math.random() - 0.5);
 
-    // Pass 2: Wishes (Latest per supervisor)
-    const latestWishes = {};
-    DATA.wishes.forEach(w => {
-        const code = String(getVal(w, 'كود الموجه')).trim();
-        if (code) latestWishes[code] = w;
-    });
+            shuffledSups.forEach(sup => {
+                const supCode = String(getVal(sup, 'كود الموجه')).trim();
+                const supName = getVal(sup, 'اسم الموجه');
+                const logWish = latestWishes[supCode];
 
-    for (let pass = 1; pass <= 4; pass++) {
-        // Randomize sups order within pass for fairness
-        const shuffledSups = [...activeSups].sort(() => Math.random() - 0.5);
+                if (!logWish) return;
 
-        shuffledSups.forEach(sup => {
-            const supName = getVal(sup, 'اسم الموجه');
-            const supCode = String(getVal(sup, 'كود الموجه')).trim();
-            if (supervisorLoad[supCode] >= LOAD_LIMIT) return;
+                // Diagnostic: Skip if supervisor already has a school
+                if (supervisorLoad[supCode] >= LOAD_LIMIT) {
+                    if (pass === 1) log(`ℹ️ الموجه "${supName}" تخطى الرغبات لأنه مكلف مسبقاً (إجباري أو من ملف المدارس)`);
+                    return;
+                }
 
-            const logWish = latestWishes[supCode];
-            const wishSchoolId = logWish ? (
-                getVal(logWish, `رغبة ${pass}`) || getVal(logWish, `رغبة${pass}`) ||
-                getVal(logWish, `wish ${pass}`) || getVal(logWish, `wish${pass}`) ||
-                getVal(logWish, `الرغبة ${pass}`)
-            ) : (
-                getVal(sup, `رغبة ${pass}`) || getVal(sup, `رغبة${pass}`) || getVal(sup, `wish${pass}`)
-            );
+                // Try header-based then index-based (Indices: flexible based on code position)
+                const wishSchoolId = String(
+                    getVal(logWish, `رغبة ${pass}`) || getVal(logWish, `رغبة${pass}`) ||
+                    getVal(logWish, `wish ${pass}`) || getVal(logWish, `wish${pass}`) ||
+                    getVal(logWish, `الرغبة ${pass}`) ||
+                    Object.values(logWish)[pass + 1] || Object.values(logWish)[pass + 2]
+                ).trim();
 
-            if (wishSchoolId) {
-                const searchCode = String(wishSchoolId).trim();
-                const school = DATA.final.find(f => String(getVal(f, 'كود المدرسة')).trim() === searchCode && !f.finalSup);
-                if (school) {
-                    school.finalSup = supName;
-                    school.finalSupCode = supCode;
-                    school.method = `رغبة ${pass}`;
-                    incrementLoad(supCode, getVal(school, 'المرحلة'), getVal(school, 'النوعية'));
+                if (wishSchoolId && wishSchoolId !== 'undefined' && wishSchoolId !== '') {
+                    const school = DATA.final.find(f => String(getVal(f, 'كود المدرسة')).trim() === wishSchoolId);
+
+                    if (!school) {
+                        log(`⚠️ [رغبة ${pass}] الموجه "${supName}" طلب كود مدرسة غير موجود: ${wishSchoolId}`);
+                    } else if (school.finalSup) {
+                        // Only log if they haven't been assigned anything yet
+                        log(`🚫 [رغبة ${pass}] الموجه "${supName}" طلب "${getVal(school, 'اسم المدرسة')}" ولكنها مشغولة بـ "${school.finalSup}"`);
+                    } else {
+                        school.finalSup = getVal(sup, 'اسم الموجه');
+                        school.finalSupCode = supCode;
+                        school.method = `رغبة ${pass}`;
+                        incrementLoad(supCode, getVal(school, 'المرحلة'), getVal(school, 'النوعية'));
+
+                        // Backfill Guidance
+                        if (!getVal(school, 'كود التوجيه') && !getVal(school, 'التوجيه')) {
+                            school['كود التوجيه'] = getVal(sup, 'كود التوجيه');
+                        }
+
+                        log(`✅ [رغبة ${pass}] تخصيص مدرسة "${getVal(school, 'اسم المدرسة')}" لـ "${school.finalSup}"`);
+                    }
+                }
+            });
+        }
+
+        // Pre-calc Guidance Populations (for Small Dept Bias)
+        const guidancePop = {};
+        activeSups.forEach(s => {
+            const g = String(getVal(s, 'كود التوجيه') || getVal(s, 'التوجيه') || '0').trim();
+            guidancePop[g] = (guidancePop[g] || 0) + 1;
+        });
+
+        // Pass 3: Smart Balanced Distribution
+        const pendingSchools = DATA.final.filter(f => !f.finalSup).sort(() => Math.random() - 0.5);
+        log(`بدء التوزيع الموازي للمدارس المتبقية (${pendingSchools.length} مدرسة)...`);
+
+        pendingSchools.forEach(school => {
+            const guidCode = String(getVal(school, 'كود التوجيه')).trim();
+            const stage = getVal(school, 'المرحلة');
+            const type = getVal(school, 'النوعية');
+
+            function calculateFairnessScore(sup) {
+                const code = String(getVal(sup, 'كود الموجه')).trim();
+                const totalLoad = supervisorLoad[code];
+                if (totalLoad >= LOAD_LIMIT) return Infinity;
+
+                const stageLoad = supervisorStageLoad[code][stage] || 0;
+                const typeLoad = supervisorTypeLoad[code][type] || 0;
+
+                const supGuid = String(getVal(sup, 'كود التوجيه') || getVal(sup, 'التوجيه') || '0').trim();
+                const isSpecialtyMatch = supGuid === guidCode;
+                const populationPenalty = (guidancePop[supGuid] || 0) * 2; // Bias: Larger depts = Higher Score = Picked Last
+
+                let score = (totalLoad * 500) + (stageLoad * 50) + (typeLoad * 25) + populationPenalty;
+                if (!isSpecialtyMatch) score += 2000; // Prioritize specialty match above all else
+
+                return score + (Math.random() * 10); // Tiny jitter to break exact ties
+            }
+
+            const candidates = activeSups
+                .map(sup => ({ sup, score: calculateFairnessScore(sup) }))
+                .filter(c => c.score !== Infinity)
+                .sort((a, b) => a.score - b.score);
+
+            const best = candidates[0];
+            if (best) {
+                const code = String(getVal(best.sup, 'كود الموجه')).trim();
+                school.finalSup = getVal(best.sup, 'اسم الموجه');
+                school.finalSupCode = code;
+                school.method = best.score < 2000 ? 'توزيع ذكي (تخصص)' : 'توزيع ذكي (عام)';
+                incrementLoad(code, stage, type);
+
+                // Backfill Guidance
+                if (!getVal(school, 'كود التوجيه') && !getVal(school, 'التوجيه')) {
+                    school['كود التوجيه'] = getVal(best.sup, 'كود التوجيه');
                 }
             }
         });
+
+        log("=== اكتمل التوزيع بنجاح ===");
+
+        // Display Sync Log
+        const syncLog = document.getElementById('syncLog');
+        if (syncLog) {
+            syncLog.innerHTML = `<div class="p-3 text-[10px] space-y-1">${logBatch.reverse().join('<br>')}</div>` + syncLog.innerHTML;
+            document.getElementById('syncLogContainer')?.classList.remove('hidden');
+        }
+
+        renderAdminTable();
+        updateDashboard();
+
+        // Switch to results view
+        switchAdminTab('results');
+
+        // Auto-save to sheet
+        autoSaveDistribution();
+
+    } catch (e) {
+        console.error("Distribution Error:", e);
+        showToast("حدث خطأ أثناء التوزيع: " + e.message, "❌");
     }
-
-    // Pass 3: Smart Balanced Distribution (Optimization Mode)
-    // We process schools in a random order to avoid structural bias
-    const pendingSchools = DATA.final.filter(f => !f.finalSup).sort(() => Math.random() - 0.5);
-
-    pendingSchools.forEach(school => {
-        const guidCode = String(getVal(school, 'كود التوجيه')).trim();
-        const stage = getVal(school, 'المرحلة');
-        const type = getVal(school, 'النوعية');
-
-        // Heuristic Scoring Function: Lower is Better
-        // Penalty = global_load*100 + stage_load*50 + type_load*20 + specialty_mismatch*1000
-        function calculateFairnessScore(sup) {
-            const code = String(getVal(sup, 'كود الموجه')).trim();
-            const totalLoad = supervisorLoad[code];
-            if (totalLoad >= LOAD_LIMIT) return Infinity;
-
-            const stageLoad = supervisorStageLoad[code][stage] || 0;
-            const typeLoad = supervisorTypeLoad[code][type] || 0;
-            const isSpecialtyMatch = String(getVal(sup, 'كود التوجيه')).trim() === guidCode;
-
-            let score = (totalLoad * 100) + (stageLoad * 50) + (typeLoad * 25);
-            if (!isSpecialtyMatch) score += 1000; // Major penalty for non-specialty match
-
-            return score;
-        }
-
-        const sortedCandidates = activeSups
-            .map(sup => ({ sup, score: calculateFairnessScore(sup) }))
-            .filter(c => c.score !== Infinity)
-            .sort((a, b) => a.score - b.score);
-
-        const best = sortedCandidates[0];
-        if (best) {
-            const code = String(getVal(best.sup, 'كود الموجه')).trim();
-            school.finalSup = getVal(best.sup, 'اسم الموجه');
-            school.finalSupCode = code;
-            school.method = best.score < 1000 ? 'توزيع ذكي (متوازن)' : 'توزيع عام (متوازن)';
-            incrementLoad(code, stage, type);
-        }
-    });
-
-    renderAdminTable();
 }
-
 // --- Admin Features ---
 
 function manualOverride(schoolId, supName) {
     const row = DATA.final.find(s => getVal(s, 'كود المدرسة') == schoolId);
     if (row) {
-        row.finalSup = supName || null;
-        row.method = supName ? 'تعديل إداري' : 'تلقائي';
+        if (!supName) {
+            row.finalSup = null;
+            row.finalSupCode = null;
+            row.method = 'تعديل إداري (إلغاء)';
+        } else {
+            // Lookup supervisor details
+            const supObj = DATA.supervisors.find(su => getVal(su, 'اسم الموجه') === supName);
+            row.finalSup = supName;
+            row.finalSupCode = supObj ? getVal(supObj, 'كود الموجه') : '';
+            row.method = 'تعديل إداري';
+
+            // Auto-fix guidance if missing from school
+            if (!getVal(row, 'كود التوجيه') && !getVal(row, 'التوجيه') && supObj) {
+                const supGuidCode = getVal(supObj, 'كود التوجيه');
+                // We create a temporary property or update existing if possible
+                if (supGuidCode) row['كود التوجيه'] = supGuidCode;
+            }
+        }
+
         updateDashboard();
         renderAdminTable();
-        showToast("تم تحديث وجدول التوزيع", "✍️");
+        showToast("تم تحديث الجدول .. جاري الحفظ", "✍️");
+        autoSaveDistribution();
+    }
+}
+
+async function autoSaveDistribution() {
+    const results = DATA.final.map(row => ({
+        supName: row.finalSup || '',
+        supCode: row.finalSupCode || '',
+        guidance: getGuidanceName(getVal(row, 'كود التوجيه') || getVal(row, 'التوجيه') || getVal(row, 'الإدارة')),
+        schoolName: getVal(row, 'اسم المدرسة'),
+        schoolCode: getVal(row, 'كود المدرسة'),
+        stage: getVal(row, 'المرحلة')
+    }));
+
+    try {
+        const gasUrl = document.getElementById('gasUrl').value;
+        if (!gasUrl) return;
+
+        // Use 'no-cors' mode but with correct payload structure
+        // Note: 'no-cors' prevents reading response, but POST works.
+        const payload = {
+            type: 'saveResults', // Match code.gs
+            results: results
+        };
+
+        await fetch(gasUrl, {
+            method: 'POST',
+            mode: 'no-cors',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+        showToast("تم حفظ التوزيع في الشيت بنجاح", "💾");
+    } catch (e) {
+        console.error(e);
+        showToast("فشل الحفظ التلقائي", "❌");
     }
 }
 
@@ -493,12 +734,10 @@ function renderMandatoryTable() {
     // Track already assigned mandatory supervisors across ALL schools
     const assignedSups = new Set(DATA.schools.map(s => s._mandatorySup).filter(Boolean));
 
+    const bulkSelect = document.getElementById('bulkSupSelect');
     if (bulkSelect) {
         const currentVal = bulkSelect.value;
-        const activeSups = DATA.supervisors.filter(sup => {
-            const status = (getVal(sup, 'الحالة') || getVal(sup, 'نشط') || 'نشط').trim();
-            return status !== 'غير نشط' && status !== '0';
-        });
+        const activeSups = DATA.supervisors.filter(sup => isSupervisorAvailable(sup));
 
         bulkSelect.innerHTML = '<option value="">اختر الموجه لتطبيقه على الكل...</option>' +
             activeSups.map(sup => {
@@ -548,6 +787,11 @@ function renderAdminTable() {
     const body = document.getElementById('resultBody');
     if (!body) return;
 
+    if (!DATA.final || DATA.final.length === 0) {
+        body.innerHTML = '<tr><td colspan="6" class="px-8 py-8 text-center text-slate-500">لا توجد نتائج للتوزيع بعد. يرجى الضغط على زر "توزيع وإصلاح" لبدء العملية.</td></tr>';
+        return;
+    }
+
     body.innerHTML = DATA.final.map(s => {
         const schoolCode = getVal(s, 'كود المدرسة');
 
@@ -556,11 +800,23 @@ function renderAdminTable() {
 
         // Fallback: Use assigned supervisor's guidance code if school info is missing
         if (!guidCode && s.finalSupCode) {
-            const assignedSup = DATA.supervisors.find(sx => getVal(sx, 'كود الموجه') == s.finalSupCode);
+            const assignedSup = DATA.supervisors.find(sx => getVal(sx, 'كود التوجيه') == s.finalSupCode);
             if (assignedSup) guidCode = getVal(assignedSup, 'كود التوجيه') || getVal(assignedSup, 'التوجيه');
         }
 
-        const guidName = getGuidanceName(guidCode);
+        const gName = getGuidanceName(guidCode);
+
+        // Get supervisor status
+        let statusBadge = '<span class="text-slate-500 text-xs">غير محدد</span>';
+        if (s.finalSupCode) {
+            const sup = DATA.supervisors.find(sx => String(getVal(sx, 'كود الموجه')).trim() == s.finalSupCode);
+            if (sup) {
+                const isAvailable = isSupervisorAvailable(sup);
+                statusBadge = isAvailable
+                    ? '<span class="text-xs px-3 py-1 bg-emerald-500/20 text-emerald-400 rounded-full font-bold">✅ نشط</span>'
+                    : '<span class="text-xs px-3 py-1 bg-red-500/20 text-red-400 rounded-full font-bold">❌ غير نشط</span>';
+            }
+        }
         const method = s.method || 'تلقائي';
 
         let badgeStyle = "bg-slate-800 text-slate-400";
@@ -586,14 +842,14 @@ function renderAdminTable() {
                 }).join('')}
                 </select>
             </td>
-            <td class="px-8 py-5 text-slate-400 font-mono text-xs">${guidName}</td>
+            <td class="px-8 py-5 text-slate-400 font-mono text-xs">${gName}</td>
             <td class="px-8 py-5 text-indigo-300 text-xs">${getVal(s, 'المرحلة')}</td>
             <td class="px-8 py-5 text-[10px] font-bold">
                 <span class="px-2 py-1 rounded ${badgeStyle}">${method}</span>
             </td>
             <td class="px-8 py-5 text-center">
                 <button onclick="generateIndividualLetters('${schoolCode}')" 
-                        class="p-2 hover:bg-white/10 rounded-lg text-amber-500 title="طباعة الخطاب">
+                        class="p-2 hover:bg-white/10 rounded-lg text-amber-500" title="طباعة الخطاب">
                     <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" 
                               d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z" />
@@ -740,6 +996,20 @@ async function handleLogin() {
     document.getElementById('wishesSection').classList.remove('hidden');
 }
 
+function switchAdminTab(tabId) {
+    // Nav Logic
+    document.querySelectorAll('[id^="admin-view-"]').forEach(el => el.classList.add('hidden'));
+    document.getElementById(`admin-view-${tabId}`).classList.remove('hidden');
+
+    if (tabId === 'status') {
+        renderStatusTable();
+    } else if (tabId === 'data') {
+        renderRawData('schools'); // Default to schools view
+    } else if (tabId === 'results') {
+        renderAdminTable();
+    }
+}
+
 function loadExistingWishes(supCode) {
     const sCode = String(supCode).trim();
     const lastWish = [...DATA.wishes].reverse().find(w => String(getVal(w, 'كود الموجه')).trim() === sCode);
@@ -759,6 +1029,70 @@ function loadExistingWishes(supCode) {
         }
         showToast("تم استعادة رغباتك السابقة من السجلات", "✅");
     }
+}
+
+// Validate wishes to ensure no duplicates
+function validateWishes() {
+    const wishes = [];
+    const duplicates = new Set();
+
+    // Collect all selected wishes
+    for (let i = 1; i <= 4; i++) {
+        const select = document.getElementById(`wish${i}`);
+        if (select && select.value) {
+            const value = select.value.trim();
+            if (wishes.includes(value)) {
+                duplicates.add(value);
+            }
+            wishes.push(value);
+        }
+    }
+
+    // Update UI for each wish slot
+    for (let i = 1; i <= 4; i++) {
+        const select = document.getElementById(`wish${i}`);
+        if (!select) continue;
+
+        const parentDiv = select.closest('.bg-white\/5');
+        if (!parentDiv) continue;
+
+        // Remove existing warning if any
+        const existingWarning = parentDiv.querySelector('.duplicate-warning');
+        if (existingWarning) existingWarning.remove();
+
+        // Check if current selection is a duplicate
+        if (select.value && duplicates.has(select.value)) {
+            select.classList.add('border-rose-500', 'border-2');
+            select.classList.remove('border-white/5');
+
+            // Add warning message
+            const warning = document.createElement('div');
+            warning.className = 'duplicate-warning text-rose-400 text-xs font-bold flex items-center gap-2 mt-2 animate-pulse';
+            warning.innerHTML = '⚠️ تم اختيار هذه المدرسة مسبقاً في رغبة أخرى';
+            parentDiv.appendChild(warning);
+        } else {
+            select.classList.remove('border-rose-500', 'border-2');
+            if (!select.classList.contains('border-white/5')) {
+                select.classList.add('border-white/5');
+            }
+        }
+    }
+
+    // Enable/disable submit button based on duplicates
+    const submitBtn = document.getElementById('submitBtn');
+    if (submitBtn) {
+        if (duplicates.size > 0) {
+            submitBtn.disabled = true;
+            submitBtn.classList.add('opacity-50', 'cursor-not-allowed');
+            submitBtn.classList.remove('hover:bg-emerald-700');
+        } else {
+            submitBtn.disabled = false;
+            submitBtn.classList.remove('opacity-50', 'cursor-not-allowed');
+            submitBtn.classList.add('hover:bg-emerald-700');
+        }
+    }
+
+    return duplicates.size === 0;
 }
 
 function renderSchoolSelects(specificSlot = null) {
@@ -803,17 +1137,29 @@ function renderSchoolSelects(specificSlot = null) {
 
         select.innerHTML = `<option value="">اختر مدرسة (${filteredSchools.length})...</option>${options}`;
         if (currentVal) select.value = currentVal; // Restore if possible
+
+        // Add onchange event to validate wishes
+        select.onchange = () => validateWishes();
     });
+
+    // Run validation after rendering
+    setTimeout(() => validateWishes(), 100);
 }
 
 async function submitWishes() {
     const gasUrl = document.getElementById('gasUrl').value;
     if (!gasUrl) return showToast("لم يتم إعداد رابط الاستقبال", "⚠️");
 
+    // Validate wishes before submission
+    if (!validateWishes()) {
+        return showToast("يوجد تكرار في الرغبات! يرجى اختيار مدارس مختلفة", "⚠️");
+    }
+
     const payload = {
         type: 'wish',
         supCode: getVal(DATA.activeUser, 'كود الموجه'),
         supName: getVal(DATA.activeUser, 'اسم الموجه'),
+        guidanceCode: getVal(DATA.activeUser, 'كود التوجيه'),
         wish1: document.getElementById('wish1').value,
         wish2: document.getElementById('wish2').value,
         wish3: document.getElementById('wish3').value,
@@ -898,12 +1244,19 @@ async function saveMandatoryAssignments() {
     const assignments = [];
     DATA.schools.forEach(s => {
         const schoolId = String(getVal(s, 'كود المدرسة')).trim();
-        const mSup = s._mandatorySup; // Use internal state
+        const mSup = s._mandatorySup; // Supervisor Name
         if (mSup) {
+            // Lookup sup full info
+            const supObj = DATA.supervisors.find(sx => getVal(sx, 'اسم الموجه') === mSup);
+            const supCode = supObj ? getVal(supObj, 'كود الموجه') : '';
+            const guidCode = supObj ? getVal(supObj, 'كود التوجيه') : '';
+
             assignments.push({
                 schoolCode: schoolId,
                 schoolName: getVal(s, 'اسم المدرسة'),
-                supName: mSup
+                supName: mSup,
+                supCode: supCode,
+                guidanceCode: guidCode
             });
         }
     });
@@ -947,7 +1300,8 @@ async function pushResultsToSheet() {
             guidance: gName, // Store the name for clarity in the sheet
             schoolName: getVal(s, 'اسم المدرسة'),
             schoolCode: getVal(s, 'كود المدرسة'),
-            stage: getVal(s, 'المرحلة') || '-'
+            stage: getVal(s, 'المرحلة') || '-',
+            method: s.method || 'تلقائي'
         };
     });
 
@@ -1011,7 +1365,7 @@ function exportResults() {
 
 const OFFICIALS = {
     gm: { name: "أ / سعاد محمد", title: "مدير عام الإدارة", phone: "01120309568" },
-    deputy: { name: "أ / غادة محمد", title: "وكيل الإدارة", phone: "01100686383" }, // Phone updated as requested
+    deputy: { name: "أ / غادة محمد", title: "وكيل الإدارة", phone: "01100892438" },
     security: { name: "أ / وجيه عبد العال", title: "مسئول أمن الإدارة", phone: "01100686383" },
     managers: [
         { stage: "المرحلة الابتدائية", name: "أ / هشام محمود كامل", phone: "01124589939" },
@@ -1021,9 +1375,6 @@ const OFFICIALS = {
 };
 
 function generateOfficialGeneralReport() {
-    const container = document.getElementById('printReportContainer');
-    if (!container) return;
-
     // 1. Group DATA.final by Guidance
     const grouped = {};
     DATA.final.forEach(s => {
@@ -1042,9 +1393,11 @@ function generateOfficialGeneralReport() {
         let rowsHtml = schools.map((s, index) => {
             const sup = DATA.supervisors.find(su => getVal(su, 'كود الموجه') == s.finalSupCode);
             const phone = sup ? (getVal(sup, 'تليفون الموجه') || getVal(sup, 'التليفون') || '-') : '-';
+            // Arabic numerals
+            const arabicNum = String(index + 1).replace(/\d/g, d => '٠١٢٣٤٥٦٧٨٩'[d]);
             return `
                 <tr>
-                    <td>${index + 1}</td>
+                    <td>${arabicNum}</td>
                     <td style="text-align:right">${getVal(s, 'اسم المدرسة')}</td>
                     <td>${s.finalSup || '-'}</td>
                     <td>${phone}</td>
@@ -1057,31 +1410,35 @@ function generateOfficialGeneralReport() {
             <div class="report-page page-break">
                 <div class="report-header">
                     <div style="text-align:right">
-                        <p>محافظة الجيزة</p>
-                        <p>إدارة العمرانية التعليمية</p>
+                        <p style="font-weight:900; font-size:14px;">محافظة الجيزة</p>
+                        <p style="font-weight:900; font-size:14px;">إدارة العمرانية التعليمية</p>
+                        <p style="font-size:11px; margin-top:3px;">تاريخ: ${new Date().toLocaleDateString('ar-EG')}</p>
                     </div>
-                    <div class="report-title-box">
-                        توزيع السادة الموجهين المقيمين لمتابعة امتحانات نصف العام 2026/2025م
+                    <div class="report-title-box" style="flex:1; margin:0 15px;">
+                        <div style="font-weight:900; font-size:16px;">كشف توزيع الموجهين المقيمين</div>
+                        <div style="font-size:13px; margin-top:3px; font-weight:normal;">لمتابعة امتحانات نصف العام 2025/2026م</div>
                     </div>
                     <div style="text-align:left">
-                        <img src="logo.png" style="width:70px; height:auto;">
-                        <p style="font-size:10px; margin-top:2px;">لجنة الإدارة</p>
+                        <div style="width:70px; height:70px; border:2px solid #000; display:flex; align-items:center; justify-content:center; font-weight:bold; font-size:10px; background:#f8f9fa;">
+                             <img src="logo.png" style="width:100%; height:100%; object-fit:contain;" alt="شعار الإدارة">
+                        </div>
+                        <p style="font-size:9px; margin-top:4px; font-weight:bold;">لجنة الإدارة</p>
                     </div>
                 </div>
 
-                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
-                    <div style="font-weight:bold; font-size:1.1rem;">توجيه : ${guidName}</div>
-                    <div style="font-size:0.9rem;">رقم الكشف: (${guidName}) / 2026</div>
+                <div style="display:flex; justify-content:space-between; align-items:center; margin:15px 0; padding:8px; background:#f8f9fa; border:1.5px solid #000;">
+                    <div style="font-weight:900; font-size:1.2rem;">📋 توجيه: ${guidName}</div>
+                    <div style="font-size:0.85rem;">عدد المدارس: ${schools.length}</div>
                 </div>
                 
                 <table class="official-table">
                     <thead>
-                        <tr>
-                            <th style="width:40px">م</th>
-                            <th>المدرسة</th>
-                            <th>اسم الموجه</th>
-                            <th>التليفون</th>
-                            <th>توقيع الموجه</th>
+                        <tr style="background:#e9ecef;">
+                            <th style="width:50px; font-weight:900;">م</th>
+                            <th style="text-align:right; font-weight:900;">اسم المدرسة</th>
+                            <th style="width:180px; font-weight:900;">اسم الموجه المقيم</th>
+                            <th style="width:120px; font-weight:900;">رقم التليفون</th>
+                            <th style="width:120px; font-weight:900;">توقيع الموجه</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -1089,24 +1446,58 @@ function generateOfficialGeneralReport() {
                     </tbody>
                 </table>
 
-                <div class="signature-section">
-                    <div class="signature-block">
-                        <p>يعتمد،، مدير عام الإدارة</p>
-                        <p>${OFFICIALS.gm.name}</p>
+                <div style="margin-top:25px; display:flex; justify-content:space-between; align-items:flex-start;">
+                    <div style="border:1.5px solid #000; padding:8px 15px; font-size:11px;">
+                        <p style="margin-bottom:3px;"><strong>ملاحظات هامة:</strong></p>
+                        <p style="margin:2px 0;">• يُرجى الالتزام بالمدرسة المحددة</p>
+                        <p style="margin:2px 0;">• التواصل الفوري مع غرفة العمليات</p>
+                    </div>
+                    <div class="signature-block" style="text-align:center; min-width:200px;">
+                        <p style="font-weight:bold; margin-bottom:5px;">يعتمد،،</p>
+                        <p style="font-weight:900; font-size:1.1rem; margin:3px 0;">مدير عام الإدارة</p>
+                        <p style="font-weight:bold; font-size:1.05rem; margin-top:8px;">${OFFICIALS.gm.name}</p>
+                        <p style="margin-top:30px; border-top:1px solid #000; padding-top:3px; font-size:10px;">التوقيع</p>
                     </div>
                 </div>
             </div>
         `;
     }).join('');
 
-    container.innerHTML = fullHtml;
-    window.print();
+    // Use New Window Strategy for Robust Printing
+    const printWindow = window.open('', '_blank', 'width=1000,height=800');
+    if (!printWindow) return showToast("يرجى السماح بالنوافذ المنبثقة للطباعة", "⚠️");
+
+    const css = `
+        <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;900&display=swap" rel="stylesheet">
+        <style>
+            body { font-family: 'Cairo', sans-serif; direction: rtl; padding: 20px; }
+            .report-page { page-break-after: always; min-height: 100vh; position: relative; }
+            .report-header { display: flex; justify-content: space-between; border-bottom: 2px solid #000; padding-bottom: 10px; margin-bottom: 15px; }
+            .report-title-box { text-align: center; border: 2px solid #000; padding: 5px; border-radius: 8px; }
+            .official-table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 11px; }
+            .official-table th, .official-table td { border: 1px solid #000; padding: 4px 6px; text-align: center; }
+            .signature-block { text-align: center; margin-top: 30px; }
+            @media print {
+                @page { size: A4; margin: 0.5cm; }
+                body { margin: 0; padding: 0; }
+                .no-print { display: none; }
+            }
+        </style>
+    `;
+
+    printWindow.document.write(`<html><head><title>الكشف العام</title>${css}</head><body>${fullHtml}</body></html>`);
+    printWindow.document.close();
+
+    // Slight delay to ensure content renders then print
+    printWindow.onload = () => {
+        setTimeout(() => {
+            printWindow.print();
+            // printWindow.close(); // Optional: Close after print
+        }, 500);
+    };
 }
 
 function generateIndividualLetters(specificSchoolCode = null) {
-    const container = document.getElementById('printReportContainer');
-    if (!container) return;
-
     let targetData = DATA.final.filter(s => s.finalSup);
     if (specificSchoolCode) {
         targetData = targetData.filter(s => String(getVal(s, 'كود المدرسة')).trim() === String(specificSchoolCode).trim());
@@ -1114,75 +1505,829 @@ function generateIndividualLetters(specificSchoolCode = null) {
 
     let fullHtml = targetData.map((s, idx) => {
         const sup = DATA.supervisors.find(su => getVal(su, 'كود الموجه') == s.finalSupCode);
-        const supPhone = sup ? (getVal(sup, 'تليفون الموجه') || getVal(sup, 'التليفون') || '-') : '-';
-        const guidCode = getVal(s, 'كود التوجيه') || getVal(s, 'التوجيه') || getVal(s, 'الإدارة');
+
+        // Robust Guidance Code Resolution
+        let guidCode = getVal(s, 'كود التوجيه') || getVal(s, 'التوجيه') || getVal(s, 'الإدارة') || getVal(s, 'الادارة');
+
+        // Fallback: If school has no guidance info, try to get it from the assigned supervisor
+        if (!guidCode && s.finalSupCode) {
+            const assignedSup = DATA.supervisors.find(sx => getVal(sx, 'كود الموجه') == s.finalSupCode);
+            if (assignedSup) guidCode = getVal(assignedSup, 'كود التوجيه') || getVal(assignedSup, 'التوجيه');
+        }
+
         const guidName = getGuidanceName(guidCode);
 
         return `
         <div class="report-page page-break">
             <div class="report-header">
                 <div style="text-align:right">
-                    <p>محافظة الجيزة</p>
-                    <p>إدارة العمرانية التعليمية</p>
+                    <p style="font-size:12px; font-weight:900;">محافظة الجيزة</p>
+                    <p style="font-size:11px; font-weight:900;">إدارة العمرانية التعليمية</p>
+                    <p style="font-size:9px; margin-top:4px; color:#555;">التاريخ: ${new Date().toLocaleDateString('ar-EG')}</p>
                 </div>
-                <div class="report-title-box">
-                    خطاب تكليف الموجه المقيم لمتابعة امتحانات نصف العام 2026/2025م
+                <div class="report-title-box" style="font-size:15px; padding:8px 15px; flex:1; margin:0 10px;">
+                    <div style="font-weight:900; margin-bottom:5px;">✉️ خطاب تكليف الموجه المقيم</div>
+                    <div style="font-size:13px; font-weight:normal;">لمتابعة امتحانات النقل | نصف العام 2025 / 2026</div>
                 </div>
                 <div style="text-align:left">
-                    <img src="logo.png" style="width:65px; height:auto;">
-                    <p style="font-size:9px; margin-top:2px;">لجنة الإدارة</p>
+                    <div style="width:80px; height:80px; border:2.5px solid #000; display:flex; align-items:center; justify-content:center; background:#f8f9fa;">
+                        <img src="logo.png" style="width:100%; height:100%; object-fit:contain;" alt="شعار الإدارة">
+                    </div>
+                    <p style="font-size:8px; margin-top:3px; font-weight:bold; text-align:center;">لجنة الإدارة</p>
                 </div>
             </div>
 
-            <div style="display:flex; justify-content:space-between; align-items:center; margin: 10px 0; border: 1.5px solid #000; padding: 5px; background:#f9f9f9;">
-                <div style="font-weight:bold; font-size:1.1rem;">توجيه : ${guidName}</div>
-                <div style="font-weight:bold; font-size:0.9rem;">مسلسل رقم: ${idx + 1} / 2026</div>
-            </div>
-
-            <div class="grid grid-cols-2 gap-2 mb-2" style="display:grid; grid-template-columns: 1fr 1fr; gap:8px;">
-                <div style="border:1px solid #000; padding:4px; font-size:11px;">أ / سعاد محمد ( مدير عام الإدارة ) <br> ${OFFICIALS.gm.phone}</div>
-                <div style="border:1px solid #000; padding:4px; font-size:11px;">أ / غادة محمد ( وكيل الإدارة ) <br> ${OFFICIALS.deputy.phone}</div>
-            </div>
-
-            <div style="margin:15px 0; text-align:right;">
-                <p>السيد / <strong>${s.finalSup}</strong> &nbsp;&nbsp;&nbsp;&nbsp; توجيه: <strong>${guidName}</strong></p>
-                <p style="margin-top:8px;">تم تكليفكم لمتابعة امتحانات نصف العام 2026/2025 لصفوف النقل بمدرسة :</p>
-                <div style="border:2.5px solid #000; padding:8px; text-align:center; margin:8px 0; font-size:1.3rem; font-weight:900;">
-                    ${getVal(s, 'اسم المدرسة')}
+            <div style="display:flex; flex-direction:column; gap:4px; margin-top:5px;">
+                <div style="border:1.5px solid #000; padding:4px 10px; font-size:12px; display:flex; justify-content:space-between; align-items:center;">
+                    <span>${OFFICIALS.gm.name} ( مدير عام الإدارة )</span>
+                    <span dir="ltr">${OFFICIALS.gm.phone}</span>
                 </div>
-                <p style="font-weight:bold; text-decoration:underline;">وحسب جدول مواعيد امتحانات الصفوف الموجودة بالمدرسة</p>
+                <div style="border:1.5px solid #000; padding:4px 10px; font-size:12px; display:flex; justify-content:space-between; align-items:center;">
+                    <span>${OFFICIALS.deputy.name} ( ${OFFICIALS.deputy.title} )</span>
+                    <span dir="ltr">${OFFICIALS.deputy.phone}</span>
+                </div>
+                <div style="border:1.5px solid #000; padding:4px 10px; font-size:12px; display:flex; justify-content:space-between; align-items:center;">
+                    <span>${OFFICIALS.security.name} ( مسئول أمن الإدارة )</span>
+                    <span dir="ltr">${OFFICIALS.security.phone}</span>
+                </div>
             </div>
 
-            <p style="text-align:right; font-weight:bold; margin-top:5px; font-size:0.95rem;">ويراعى الالتزام بما يلى :</p>
-            <ol class="instructions-list" dir="rtl">
+            <div style="margin:5px 0; border:1.5px solid #000; padding:5px; position:relative;">
+                <p style="font-weight:bold; margin-bottom:5px; font-size:11px;">السيد / <span style="border-bottom:1px dashed #000; padding:0 10px;">${s.finalSup}</span> &nbsp;&nbsp; توجيه: <span style="border-bottom:1px dashed #000; padding:0 10px;">${guidName}</span></p>
+                <p style="text-align:center; font-weight:bold; margin:5px 0; font-size:11px;">تم تكليفكم لمتابعة امتحانات نصف العام 2025 / 2026 لصفوف النقل بمدرسة :</p>
+                
+                <div style="display:flex; justify-content:center; gap:10px; margin:2px 0;">
+                    <div style="border:2px solid #000; padding:4px 15px; font-size:1rem; font-weight:900; min-width:150px; text-align:center; background:#f9f9f9;">
+                        ${getVal(s, 'اسم المدرسة')}
+                    </div>
+                </div>
+                <p style="text-align:center; font-weight:bold; text-decoration:underline; font-size:10px;">وحسب مواعيد جدول امتحانات الصفوف الموجودة بالمدرسة</p>
+            </div>
+
+            <p style="text-align:right; font-weight:bold; margin-top:2px; font-size:11px;">ويراعى الالتزام بما يلى :</p>
+            <ol class="instructions-list official-font-size" dir="rtl" style="margin-right:20px; margin-bottom:2px; font-size:11px; line-height:1.3;">
                 <li>التزام الموجه المقيم بتواجده مع مدير المدرسة لاستلام مظاريف الأسئلة من المطبعة السرية وتأمين سرية الامتحانات.</li>
-                <li>عمل محضر غلق وفتح دولاب الأسئلة والمسئولية مشتركة بين الموجه المقيم ومدير المدرسة.</li>
-                <li>التزام الموجه المقيم بتواجده بالمدرسة قبل بداية امتحانات المواد الغير مضافة.</li>
                 <li>الالتزام بالحضور قبل فتح مظاريف الأسئلة بوقت كاف مع مدير المدرسة ومسئوليته حتى التسليم إلى الكنترول.</li>
-                <li>التواجد بالمدرسة قبل بدء الامتحان بوقت كاف للتأكد من استيفاء جميع الإجراءات المتصلة بالامتحان.</li>
-                <li>الالتزام بخروج الطلاب آخر الوقت وعدم مغادرة المدرسة إلا بعد خروج آخر طالب ومتابعة ذلك مع مدير المدرسة.</li>
-                <li>التواصل مع غرفة العمليات بالإدارة في حال حدوث مخالفة على الفور.</li>
+                <li>التواجد بالمدرسة قبل بدء الامتحان بوقت كاف للتأكد من استيفاء جميع الإجراءات المتصلة بالامتحان وقبل فتح مظاريف الأسئلة مع مدير المدرسة ومسئوليته حتى التسليم إلى الكنترول.</li>
+                <li>الالتزام بجدول الامتحان كما هو وارد من الإدارة التعليمية وعدم مخالفته مطلقا.</li>
+                <li>عمل تقرير يومي عن سير الامتحان مرفق به نسخة من اسئلة المواد التي تم تأدية الامتحان فيها في ذات اليوم وكذلك نسخة من الإملاء لمادة اللغة العربية ونسخة من اسئلة الاستماع للغة الانجليزية بعد انتهاء الامتحانات.</li>
+                <li>عمل تقرير شامل في نهاية الامتحانات عن سير الامتحان بالمدرسة وتسليم التقارير اليومية والتقرير الشامل للمراحل في آخر يوم من أيام الامتحان لكل مرحلة.</li>
+                <li>الالتزام بخروج الطلاب آخر الوقت وعدم مغادرة المدرسة إلا بعد خروج آخر طالب ومتابعة ذلك مع مدير المدرسة ومراقبي الأدوار.</li>
+                <li>التواصل مع غرفة العمليات بالإدارة على الفور في حال حدوث مخالفة أو أي عارض ذو شأن أثناء سير الامتحان اليومي أو في حال وجود زائر من خارج الإدارة سواء من المديرية التعليمية أو الوزارة حيث أن ذلك سيتم تدوينه في التقرير اليومي للإدارة.</li>
             </ol>
 
-            <div style="border:1px solid #000; margin-top:10px;">
-                <div style="background:#eee; text-align:center; font-weight:bold; padding:4px; border-bottom:1px solid #000; font-size:0.9rem;">أرقام تواصل هامة</div>
-                <div style="display:grid; grid-template-columns: 1fr 1fr; font-size:11px;">
-                    ${OFFICIALS.managers.map(m => `<div style="border:1px solid #eee; padding:3px;">${m.stage}: ${m.name} (${m.phone})</div>`).join('')}
-                    <div style="border:1px solid #eee; padding:3px; grid-column: span 2; background:#fcfcfc;">${OFFICIALS.security.title}: ${OFFICIALS.security.name} (${OFFICIALS.security.phone})</div>
+            <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px; margin-top:8px;">
+                 <div style="text-align:right; font-size:11px; padding-right:5px;">
+                    <p style="font-weight:bold; text-decoration:underline; margin-bottom:4px;">توقيع الموجه</p>
+                    <p style="margin-bottom:2px;">الاسم : ..........................................</p>
+                    <p style="margin-bottom:2px;">الوظيفة : .......................................</p>
+                    <p style="margin-bottom:2px;">رقم التليفون : .................................</p>
+                    <p style="margin-bottom:2px;">التوقيع : ........................................</p>
+                </div>
+
+                <div style="border:1.5px solid #000; padding:0;">
+                    <div style="background:#000; color:#fff; text-align:center; font-weight:bold; padding:2px; font-size:10px;">جدول تليفونات مديرى المراحل</div>
+                    <div style="font-size:10px; padding:2px;">
+                        ${OFFICIALS.managers.map(m => `
+                            <div style="display:flex; justify-content:space-between; border-bottom:1px solid #eee; padding:1px;">
+                                <span>${m.stage}</span>
+                                <strong>${m.name}</strong>
+                                <span dir="ltr">${m.phone}</span>
+                            </div>
+                        `).join('')}
+                    </div>
                 </div>
             </div>
 
-            <div class="signature-section">
-                <div class="signature-block">
-                    <p style="font-weight:bold;">يعتمد،، مدير عام الإدارة</p>
-                    <p>${OFFICIALS.gm.name}</p>
-                    <p>........................</p>
+            <div style="margin-top:15px; display:flex; justify-content:space-between; align-items:flex-end;">
+                <div style="text-align:center; width:200px;">
+                    <p style="font-weight:bold;">يعتمد،، الموجه الأول</p>
+                    <p style="margin-top:25px;">................................</p>
+                </div>
+                <div style="text-align:center; width:200px;">
+                    <p style="font-weight:bold;">مدير عام الإدارة</p>
+                    <br>
+                    <p style="font-weight:bold; font-size:1.1rem;">أ / سعاد محمد</p>
                 </div>
             </div>
         </div>
         `;
     }).join('');
+    // Use New Window Strategy
+    const printWindow = window.open('', '_blank', 'width=800,height=800');
+    if (!printWindow) return showToast("يرجى السماح بالنوافذ المنبثقة", "⚠️");
 
-    container.innerHTML = fullHtml;
-    window.print();
+    const css = `
+        <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;900&display=swap" rel="stylesheet">
+        <style>
+            body { font-family: 'Cairo', sans-serif; direction: rtl; padding: 20px; }
+            .report-page { page-break-after: always; min-height: 95vh; position: relative; border: 1px dashed #ccc; padding: 20px; margin-bottom: 20px; }
+            .report-header { display: flex; justify-content: space-between; border-bottom: 2px solid #000; padding-bottom: 15px; margin-bottom: 20px; }
+            .report-title-box { text-align: center; border: 2px solid #000; padding: 5px; border-radius: 8px; font-weight: bold; background: #f8f9fa; }
+            @media print {
+                @page { size: A4; margin: 1cm; }
+                .report-page { border: none; margin: 0; }
+                body { margin: 0; padding: 0; }
+            }
+        </style>
+    `;
+
+    printWindow.document.write(`<html><head><title>خطابات التكليف</title>${css}</head><body>${fullHtml}</body></html>`);
+    printWindow.document.close();
+
+    printWindow.onload = () => {
+        setTimeout(() => {
+            printWindow.print();
+        }, 500);
+    };
+}
+
+// --- Comprehensive Data Management System ---
+
+// --- Modal Logic ---
+
+function closeModal() {
+    const modals = [
+        document.getElementById('adminLoginModal'),
+        document.getElementById('mgmtModal')
+    ];
+    modals.forEach(m => {
+        if (m) m.classList.add('hidden');
+    });
+}
+
+// --- New Reports Logic ---
+
+function generateBlankLetter() {
+    // Helper to render the HTML structure (reused layout)
+    const renderLetter = (s, guidName) => `
+        <div class="report-page page-break">
+            <div class="report-header">
+                <div style="text-align:right">
+                    <p style="font-size:12px; font-weight:900;">محافظة الجيزة</p>
+                    <p style="font-size:11px; font-weight:900;">إدارة العمرانية التعليمية</p>
+                    <p style="font-size:9px; margin-top:4px; color:#555;">التاريخ: ${new Date().toLocaleDateString('ar-EG')}</p>
+                </div>
+                <div class="report-title-box" style="font-size:15px; padding:8px 15px; flex:1; margin:0 10px;">
+                    <div style="font-weight:900; margin-bottom:5px;">✉️ خطاب تكليف الموجه المقيم</div>
+                    <div style="font-size:13px; font-weight:normal;">لمتابعة امتحانات النقل | نصف العام 2025 / 2026</div>
+                </div>
+                <div style="text-align:left">
+                    <div style="width:80px; height:80px; border:2.5px solid #000; display:flex; align-items:center; justify-content:center; background:#f8f9fa;">
+                        <img src="logo.png" style="width:100%; height:100%; object-fit:contain;" alt="شعار الإدارة">
+                    </div>
+                    <p style="font-size:8px; margin-top:3px; font-weight:bold; text-align:center;">لجنة الإدارة</p>
+                </div>
+            </div>
+
+            <div style="display:flex; flex-direction:column; gap:4px; margin-top:5px;">
+                <div style="border:1.5px solid #000; padding:4px 10px; font-size:12px; display:flex; justify-content:space-between; align-items:center;">
+                    <span>${OFFICIALS.gm.name} ( مدير عام الإدارة )</span>
+                    <span dir="ltr">${OFFICIALS.gm.phone}</span>
+                </div>
+                <div style="border:1.5px solid #000; padding:4px 10px; font-size:12px; display:flex; justify-content:space-between; align-items:center;">
+                    <span>${OFFICIALS.deputy.name} ( ${OFFICIALS.deputy.title} )</span>
+                    <span dir="ltr">${OFFICIALS.deputy.phone}</span>
+                </div>
+                <div style="border:1.5px solid #000; padding:4px 10px; font-size:12px; display:flex; justify-content:space-between; align-items:center;">
+                    <span>${OFFICIALS.security.name} ( مسئول أمن الإدارة )</span>
+                    <span dir="ltr">${OFFICIALS.security.phone}</span>
+                </div>
+            </div>
+
+            <div style="margin:5px 0; border:1.5px solid #000; padding:5px; position:relative;">
+                <p style="font-weight:bold; margin-bottom:5px; font-size:11px;">السيد / <span style="border-bottom:1px dashed #000; padding:0 10px;">.........................................</span> &nbsp;&nbsp; توجيه: <span style="border-bottom:1px dashed #000; padding:0 10px;">.........................................</span></p>
+                <p style="text-align:center; font-weight:bold; margin:5px 0; font-size:11px;">تم تكليفكم لمتابعة امتحانات نصف العام 2025 / 2026 لصفوف النقل بمدرسة :</p>
+                
+                <div style="display:flex; justify-content:center; gap:10px; margin:2px 0;">
+                    <div style="border:2px solid #000; padding:4px 15px; font-size:1rem; font-weight:900; min-width:150px; text-align:center; background:#f9f9f9;">
+                        ..................................................................
+                    </div>
+                </div>
+                <p style="text-align:center; font-weight:bold; text-decoration:underline; font-size:10px;">وحسب مواعيد جدول امتحانات الصفوف الموجودة بالمدرسة</p>
+            </div>
+
+            <p style="text-align:right; font-weight:bold; margin-top:2px; font-size:11px;">ويراعى الالتزام بما يلى :</p>
+            <ol class="instructions-list official-font-size" dir="rtl" style="margin-right:20px; margin-bottom:2px; font-size:11px; line-height:1.3;">
+                <li>التزام الموجه المقيم بتواجده مع مدير المدرسة لاستلام مظاريف الأسئلة من المطبعة السرية وتأمين سرية الامتحانات.</li>
+                <li>الالتزام بالحضور قبل فتح مظاريف الأسئلة بوقت كاف مع مدير المدرسة ومسئوليته حتى التسليم إلى الكنترول.</li>
+                <li>التواجد بالمدرسة قبل بدء الامتحان بوقت كاف للتأكد من استيفاء جميع الإجراءات المتصلة بالامتحان وقبل فتح مظاريف الأسئلة مع مدير المدرسة ومسئوليته حتى التسليم إلى الكنترول.</li>
+                <li>الالتزام بجدول الامتحان كما هو وارد من الإدارة التعليمية وعدم مخالفته مطلقا.</li>
+                <li>عمل تقرير يومي عن سير الامتحان مرفق به نسخة من اسئلة المواد التي تم تأدية الامتحان فيها في ذات اليوم وكذلك نسخة من الإملاء لمادة اللغة العربية ونسخة من اسئلة الاستماع للغة الانجليزية بعد انتهاء الامتحانات.</li>
+                <li>عمل تقرير شامل في نهاية الامتحانات عن سير الامتحان بالمدرسة وتسليم التقارير اليومية والتقرير الشامل للمراحل في آخر يوم من أيام الامتحان لكل مرحلة.</li>
+                <li>الالتزام بخروج الطلاب آخر الوقت وعدم مغادرة المدرسة إلا بعد خروج آخر طالب ومتابعة ذلك مع مدير المدرسة ومراقبي الأدوار.</li>
+                <li>التواصل مع غرفة العمليات بالإدارة على الفور في حال حدوث مخالفة أو أي عارض ذو شأن أثناء سير الامتحان اليومي أو في حال وجود زائر من خارج الإدارة سواء من المديرية التعليمية أو الوزارة حيث أن ذلك سيتم تدوينه في التقرير اليومي للإدارة.</li>
+            </ol>
+
+            <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px; margin-top:8px;">
+                 <div style="text-align:right; font-size:11px; padding-right:5px;">
+                    <p style="font-weight:bold; text-decoration:underline; margin-bottom:4px;">توقيع الموجه</p>
+                    <p style="margin-bottom:2px;">الاسم : ..........................................</p>
+                    <p style="margin-bottom:2px;">الوظيفة : .......................................</p>
+                    <p style="margin-bottom:2px;">رقم التليفون : .................................</p>
+                    <p style="margin-bottom:2px;">التوقيع : ........................................</p>
+                </div>
+
+                <div style="border:1.5px solid #000; padding:0;">
+                    <div style="background:#000; color:#fff; text-align:center; font-weight:bold; padding:2px; font-size:10px;">جدول تليفونات مديرى المراحل</div>
+                    <div style="font-size:10px; padding:2px;">
+                        ${OFFICIALS.managers.map(m => `
+                            <div style="display:flex; justify-content:space-between; border-bottom:1px solid #eee; padding:1px;">
+                                <span>${m.stage}</span>
+                                <strong>${m.name}</strong>
+                                <span dir="ltr">${m.phone}</span>
+                            </div>
+                        `).join('')}
+                    </div>
+                </div>
+            </div>
+
+            <div style="margin-top:5px; display:flex; justify-content:space-between; align-items:flex-end;">
+                <div style="text-align:center; width:200px;">
+                    <p style="font-weight:bold;">يعتمد،، الموجه الأول</p>
+                    <p style="margin-top:25px;">................................</p>
+                </div>
+                <div style="text-align:center; width:200px;">
+                    <p style="font-weight:bold;">مدير عام الإدارة</p>
+                    <br>
+                    <p style="font-weight:bold; font-size:1.1rem;">أ / سعاد محمد</p>
+                </div>
+            </div>
+        </div>
+    `;
+
+    const fullHtml = renderLetter({}, ''); // Render blank
+
+    const printWindow = window.open('', '_blank', 'width=800,height=800');
+    if (!printWindow) return showToast("يرجى السماح بالنوافذ المنبثقة", "⚠️");
+
+    // Reuse CSS
+    const css = `
+        <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;900&display=swap" rel="stylesheet">
+        <style>
+            body { font-family: 'Cairo', sans-serif; direction: rtl; padding: 20px; }
+            .report-page { page-break-after: always; min-height: 95vh; position: relative; border: 1px dashed #ccc; padding: 20px; margin-bottom: 20px; }
+            .report-header { display: flex; justify-content: space-between; border-bottom: 2px solid #000; padding-bottom: 15px; margin-bottom: 20px; }
+            .report-title-box { text-align: center; border: 2px solid #000; padding: 5px; border-radius: 8px; font-weight: bold; background: #f8f9fa; }
+            @media print {
+                @page { size: A4; margin: 1cm; }
+                .report-page { border: none; margin: 0; }
+                body { margin: 0; padding: 0; }
+            }
+        </style>
+    `;
+
+    printWindow.document.write(`<html><head><title>خطاب فارغ</title>${css}</head><body>${fullHtml}</body></html>`);
+    printWindow.document.close();
+
+    printWindow.onload = () => {
+        setTimeout(() => {
+            printWindow.print();
+        }, 500);
+    };
+}
+
+function generateUnassignedReport() {
+    // 1. Identify Unassigned Supervisors
+    // Active (logic isSupervisorAvailable) AND Not in DATA.final as finalSupCode
+    if (!DATA.supervisors) return showToast('لا توجد بيانات موجهين', '⚠️');
+
+    const assignedCodes = new Set(DATA.final.filter(s => s.finalSupCode).map(s => String(s.finalSupCode).trim()));
+    const unassigned = DATA.supervisors.filter(s => {
+        const code = String(getVal(s, 'كود الموجه')).trim();
+        return isSupervisorAvailable(s) && !assignedCodes.has(code);
+    });
+
+    if (unassigned.length === 0) return showToast("جميع الموجهين النشطين تم توزيعهم! 👏", "success");
+
+    // 2. Generate Report HTML
+    const rowsHtml = unassigned.map((s, idx) => `
+        <tr>
+            <td>${idx + 1}</td>
+            <td>${getVal(s, 'اسم الموجه')}</td>
+            <td>${getVal(s, 'كود الموجه')}</td>
+            <td>${getGuidanceName(getVal(s, 'كود التوجيه'))}</td>
+            <td>${getVal(s, 'التخصص') || '-'}</td>
+        </tr>
+    `).join('');
+
+    const fullHtml = `
+        <div class="report-page">
+            <div class="report-header">
+                <div style="text-align:right">
+                    <p style="font-weight:900; font-size:14px;">محافظة الجيزة</p>
+                    <p style="font-weight:900; font-size:14px;">إدارة العمرانية التعليمية</p>
+                    <p style="font-size:11px; margin-top:3px;">تاريخ: ${new Date().toLocaleDateString('ar-EG')}</p>
+                </div>
+                <div class="report-title-box" style="flex:1; margin:0 15px;">
+                    <div style="font-weight:900; font-size:16px;">تقرير الموجهين غير الموزعين</div>
+                    <div style="font-size:13px; margin-top:3px; font-weight:normal;">(المتاحين للعمل ولم يتم تكليفهم)</div>
+                </div>
+                <div style="text-align:left">
+                    <div style="width:70px; height:70px; border:2px solid #000; display:flex; align-items:center; justify-content:center; font-weight:bold; font-size:10px; background:#f8f9fa;">
+                         <img src="logo.png" style="width:100%; height:100%; object-fit:contain;" alt="شعار الإدارة">
+                    </div>
+                </div>
+            </div>
+
+            <div style="margin:20px 0; padding:10px; background:#f8f9fa; border:1px solid #ddd; text-align:center;">
+                <strong>إجمالي غير الموزعين: ${unassigned.length} موجه</strong>
+            </div>
+
+            <table class="official-table">
+                <thead>
+                    <tr style="background:#e9ecef;">
+                        <th style="width:50px;">م</th>
+                        <th>اسم الموجه</th>
+                        <th>الكود</th>
+                        <th>التوجيه</th>
+                        <th>التخصص</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${rowsHtml}
+                </tbody>
+            </table>
+            
+             <div class="signature-block">
+                <p style="font-weight:bold; margin-bottom:5px;">يعتمد،،</p>
+                <p style="font-weight:900; font-size:1.1rem; margin:3px 0;">مدير عام الإدارة</p>
+                <p style="font-weight:bold; font-size:1.05rem; margin-top:8px;">${OFFICIALS.gm.name}</p>
+            </div>
+        </div>
+    `;
+
+    // Print
+    const printWindow = window.open('', '_blank', 'width=1000,height=800');
+    if (!printWindow) return showToast("يرجى السماح بالنوافذ المنبثقة", "⚠️");
+
+    const css = `
+        <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;900&display=swap" rel="stylesheet">
+        <style>
+            body { font-family: 'Cairo', sans-serif; direction: rtl; padding: 20px; }
+            .report-page { page-break-after: always; min-height: 100vh; position: relative; }
+            .report-header { display: flex; justify-content: space-between; border-bottom: 2px solid #000; padding-bottom: 10px; margin-bottom: 15px; }
+            .report-title-box { text-align: center; border: 2px solid #000; padding: 5px; border-radius: 8px; }
+            .official-table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 11px; }
+            .official-table th, .official-table td { border: 1px solid #000; padding: 4px 6px; text-align: center; }
+            .signature-block { text-align: center; margin-top: 30px; }
+            @media print {
+                @page { size: A4; margin: 0.5cm; }
+                body { margin: 0; padding: 0; }
+                .no-print { display: none; }
+            }
+        </style>
+    `;
+
+    printWindow.document.write(`<html><head><title>غير الموزعين</title>${css}</head><body>${fullHtml}</body></html>`);
+    printWindow.document.close();
+    printWindow.onload = () => { setTimeout(() => { printWindow.print(); }, 500); };
+}
+
+function generateUnifiedReport() {
+    // 1. Filter Assigned Schools
+    const assignments = DATA.final.filter(s => s.finalSup);
+
+    if (assignments.length === 0) return showToast("لا توجد توزيعات لعرضها", "⚠️");
+
+    // 2. Custom Sorting Logic
+    const stageOrder = { 'إبتدائي': 1, 'ابتدائي': 1, 'إعدادي': 2, 'اعدادي': 2, 'ثانوي': 3, 'تجريبي': 4 };
+    const typeOrder = { 'عام': 1, 'رسمي': 1, 'خاص': 2, 'لغات': 3, 'مجتمعي': 4, 'دولي': 5, 'فني': 6 };
+
+    assignments.sort((a, b) => {
+        // Get Ranks
+        const sA = getVal(a, 'المرحلة') || '';
+        const sB = getVal(b, 'المرحلة') || '';
+        const rankSA = stageOrder[sA.trim()] || 99;
+        const rankSB = stageOrder[sB.trim()] || 99;
+
+        if (rankSA !== rankSB) return rankSA - rankSB;
+
+        const tA = getVal(a, 'النوعية') || '';
+        const tB = getVal(b, 'النوعية') || '';
+        const rankTA = typeOrder[tA.trim()] || 99;
+        const rankTB = typeOrder[tB.trim()] || 99;
+
+        if (rankTA !== rankTB) return rankTA - rankTB;
+
+        // Fallback: Name
+        return String(getVal(a, 'اسم المدرسة')).localeCompare(String(getVal(b, 'اسم المدرسة')), 'ar');
+    });
+
+    // 3. Generate Rows
+    const rowsHtml = assignments.map((s, idx) => {
+        let guidCode = getVal(s, 'كود التوجيه') || getVal(s, 'التوجيه') || getVal(s, 'الإدارة') || getVal(s, 'الادارة');
+        if (!guidCode && s.finalSupCode) {
+            const assignedSup = DATA.supervisors.find(sx => getVal(sx, 'كود الموجه') == s.finalSupCode);
+            if (assignedSup) guidCode = getVal(assignedSup, 'كود التوجيه') || getVal(assignedSup, 'التوجيه');
+        }
+        const guidName = getGuidanceName(guidCode);
+
+        // Styling for separation
+        const isNewStage = idx > 0 && (getVal(s, 'المرحلة') !== getVal(assignments[idx - 1], 'المرحلة'));
+        const rowStyle = isNewStage ? 'border-top: 3px double #000;' : '';
+
+        return `
+            <tr style="${rowStyle}">
+                <td>${idx + 1}</td>
+                <td style="text-align:right;">${getVal(s, 'اسم المدرسة')} <span style="font-size:9px; color:#555;">(${getVal(s, 'المرحلة')} - ${getVal(s, 'النوعية')})</span></td>
+                <td>${s.finalSup}</td>
+                <td>${guidName}</td>
+                 <td></td>
+            </tr>
+        `;
+    }).join('');
+
+    // 4. Build Report Layout (One Table)
+    const fullHtml = `
+        <div class="report-page">
+            <div class="report-header">
+                <div style="text-align:right">
+                    <p style="font-weight:900; font-size:14px;">محافظة الجيزة</p>
+                    <p style="font-weight:900; font-size:14px;">إدارة العمرانية التعليمية</p>
+                    <p style="font-size:11px; margin-top:3px;">تاريخ: ${new Date().toLocaleDateString('ar-EG')}</p>
+                </div>
+                <div class="report-title-box" style="flex:1; margin:0 15px;">
+                    <div style="font-weight:900; font-size:16px;">الكشف الموحد لتوزيع الموجهين المقيمين</div>
+                    <div style="font-size:13px; margin-top:3px; font-weight:normal;">(مرتب حسب المرحلة والنوعية)</div>
+                </div>
+                <div style="text-align:left">
+                    <div style="width:70px; height:70px; border:2px solid #000; display:flex; align-items:center; justify-content:center; font-weight:bold; font-size:10px; background:#f8f9fa;">
+                         <img src="logo.png" style="width:100%; height:100%; object-fit:contain;" alt="شعار الإدارة">
+                    </div>
+                </div>
+            </div>
+
+            <table class="official-table">
+                <thead>
+                    <tr style="background:#e9ecef;">
+                        <th style="width:40px;">م</th>
+                        <th>اسم المدرسة</th>
+                        <th>اسم الموجه المقيم</th>
+                        <th>التوجيه</th>
+                        <th style="width:100px;">التوقيع</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${rowsHtml}
+                </tbody>
+            </table>
+            
+             <div class="signature-block">
+                <p style="font-weight:bold; margin-bottom:5px;">يعتمد،،</p>
+                <p style="font-weight:900; font-size:1.1rem; margin:3px 0;">مدير عام الإدارة</p>
+                <p style="font-weight:bold; font-size:1.05rem; margin-top:8px;">${OFFICIALS.gm.name}</p>
+            </div>
+        </div>
+    `;
+
+    // Print
+    const printWindow = window.open('', '_blank', 'width=1000,height=800');
+    if (!printWindow) return showToast("يرجى السماح بالنوافذ المنبثقة", "⚠️");
+
+    const css = `
+        <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;900&display=swap" rel="stylesheet">
+        <style>
+            body { font-family: 'Cairo', sans-serif; direction: rtl; padding: 20px; }
+            .report-page { page-break-after: always; min-height: 100vh; position: relative; }
+            .report-header { display: flex; justify-content: space-between; border-bottom: 2px solid #000; padding-bottom: 10px; margin-bottom: 15px; }
+            .report-title-box { text-align: center; border: 2px solid #000; padding: 5px; border-radius: 8px; }
+            .official-table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 11px; }
+            .official-table th, .official-table td { border: 1px solid #000; padding: 4px 6px; text-align: center; }
+            .signature-block { text-align: center; margin-top: 30px; }
+            @media print {
+                @page { size: A4; margin: 0.5cm; }
+                body { margin: 0; padding: 0; }
+                .no-print { display: none; }
+                table { page-break-inside: auto; }
+                tr { page-break-inside: avoid; page-break-after: auto; }
+                thead { display: table-header-group; }
+                tfoot { display: table-footer-group; }
+            }
+        </style>
+    `;
+
+    printWindow.document.write(`<html><head><title>الكشف الموحد</title>${css}</head><body>${fullHtml}</body></html>`);
+    printWindow.document.close();
+    printWindow.onload = () => { setTimeout(() => { printWindow.print(); }, 500); };
+}
+
+let currentMgmtType = 'schools';
+let currentEditId = null;
+
+const MGMT_CONFIG = {
+    schools: {
+        title: 'إدارة المدارس',
+        headers: ['الكود', 'اسم المدرسة', 'المرحلة', 'النوعية', 'التوجيه', 'إجراءات'],
+        fields: [
+            { id: 'كود المدرسة', label: 'كود المدرسة', type: 'text', required: true },
+            { id: 'اسم المدرسة', label: 'اسم المدرسة', type: 'text', required: true },
+            { id: 'المرحلة', label: 'المرحلة', type: 'select', options: ['إبتدائي', 'إعدادي', 'ثانوي', 'تجريبي'] },
+            { id: 'النوعية', label: 'النوعية', type: 'select', options: ['عام', 'خاص', 'مجتمعي', 'فني'] },
+            { id: 'كود التوجيه', label: 'كود التوجيه', type: 'text' }
+        ]
+    },
+    supervisors: {
+        title: 'إدارة الموجهين',
+        headers: ['الكود', 'اسم الموجه', 'التوجيه', 'الحالة', 'إجراءات'],
+        fields: [
+            { id: 'كود الموجه', label: 'كود الموجه', type: 'text', required: true },
+            { id: 'اسم الموجه', label: 'اسم الموجه', type: 'text', required: true },
+            { id: 'كود التوجيه', label: 'كود التوجيه', type: 'text' },
+            { id: 'التخصص', label: 'التخصص', type: 'text' },
+            { id: 'الحالة', label: 'الحالة', type: 'select', options: ['متاح', 'غير متاح'] }
+        ]
+    },
+    guidance: {
+        title: 'إدارة التوجيهات',
+        headers: ['الكود', 'اسم التوجيه', 'الباسوورد', 'إجراءات'],
+        fields: [
+            { id: 'كود التوجيه', label: 'كود التوجيه', type: 'text', required: true },
+            { id: 'اسم التوجيه', label: 'اسم التوجيه', type: 'text', required: true },
+            { id: 'الباسوورد', label: 'كلمة المرور', type: 'password' }
+        ]
+    }
+};
+
+function renderManagementTable(type) {
+    currentMgmtType = type;
+    const config = MGMT_CONFIG[type];
+
+    // Update UI Active State
+    ['schools', 'supervisors', 'guidance'].forEach(t => {
+        const btn = document.getElementById(`mgmt-btn-${t}`);
+        if (btn) {
+            btn.classList.toggle('bg-indigo-600', t === type);
+            btn.classList.toggle('text-white', t === type);
+            btn.classList.toggle('text-slate-400', t !== type);
+        }
+    });
+
+    document.getElementById('mgmtTitle').innerText = config.title;
+
+    // Render Headers
+    const headRow = document.createElement('tr');
+    config.headers.forEach(h => {
+        const th = document.createElement('th');
+        th.className = "px-6 py-4 text-xs font-bold";
+        th.innerText = h;
+        headRow.appendChild(th);
+    });
+    document.getElementById('mgmtHead').innerHTML = '';
+    document.getElementById('mgmtHead').appendChild(headRow);
+
+    // Filter & Render Body
+    const searchVal = document.getElementById('mgmtSearch').value.toLowerCase();
+    const data = DATA[type] || [];
+
+    const filtered = data.filter(item => {
+        const valStr = Object.values(item).join(' ').toLowerCase();
+        return valStr.includes(searchVal);
+    });
+
+    const tbody = document.getElementById('mgmtBody');
+    tbody.innerHTML = filtered.map(item => {
+        let cells = '';
+        const idKey = config.fields[0].id; // Assumption: First field is ID
+        const itemId = getVal(item, idKey);
+
+        if (type === 'schools') { // Ordered: Code, Name, Stage, Type, Guid
+            cells = `
+                <td>${getVal(item, 'كود المدرسة')}</td>
+                <td>${getVal(item, 'اسم المدرسة')}</td>
+                <td>${getVal(item, 'المرحلة')}</td>
+                <td>${getVal(item, 'النوعية')}</td>
+                <td>${getVal(item, 'كود التوجيه')}</td>
+            `;
+        } else if (type === 'supervisors') {
+            const status = isSupervisorAvailable(item) ? '✅ نشط' : '❌ غير نشط';
+            cells = `
+                <td>${getVal(item, 'كود الموجه')}</td>
+                <td>${getVal(item, 'اسم الموجه')}</td>
+                <td>${getGuidanceName(getVal(item, 'كود التوجيه'))}</td>
+                <td>${status}</td>
+            `;
+        } else if (type === 'guidance') {
+            cells = `
+                <td>${getVal(item, 'كود التوجيه')}</td>
+                <td>${getVal(item, 'اسم التوجيه')}</td>
+                <td>*****</td>
+            `;
+        }
+
+        return `
+            <tr class="hover:bg-white/5 border-b border-white/5 transition-colors">
+                ${cells.replace(/<td>/g, '<td class="px-6 py-4 text-sm">')}
+                <td class="px-6 py-4 flex gap-2 justify-center">
+                    <button onclick="editRecord('${itemId}')" class="p-2 bg-indigo-500/20 text-indigo-300 rounded hover:bg-indigo-500/40" title="تعديل">✏️</button>
+                    <button onclick="deleteRecord('${itemId}')" class="p-2 bg-rose-500/20 text-rose-300 rounded hover:bg-rose-500/40" title="حذف">🗑️</button>
+                </td>
+            </tr>
+        `;
+    }).join('');
+}
+
+function filterManagementTable() {
+    renderManagementTable(currentMgmtType);
+}
+
+function openAddModal() {
+    currentEditId = null;
+    document.getElementById('modalTitle').innerText = 'إضافة سجل جديد';
+    buildForm();
+    document.getElementById('mgmtModal').classList.remove('hidden');
+}
+
+function closeMgmtModal() {
+    document.getElementById('mgmtModal').classList.add('hidden');
+}
+
+function editRecord(id) {
+    currentEditId = id;
+    document.getElementById('modalTitle').innerText = 'تعديل السجل';
+    const idKey = MGMT_CONFIG[currentMgmtType].fields[0].id;
+    const record = DATA[currentMgmtType].find(item => String(getVal(item, idKey)) == String(id));
+
+    if (record) {
+        buildForm(record);
+        document.getElementById('mgmtModal').classList.remove('hidden');
+    }
+}
+
+function buildForm(data = {}) {
+    const form = document.getElementById('mgmtForm');
+    form.innerHTML = '';
+    const config = MGMT_CONFIG[currentMgmtType];
+
+    config.fields.forEach(field => {
+        const div = document.createElement('div');
+        div.className = 'space-y-1';
+
+        const label = document.createElement('label');
+        label.className = 'text-xs font-bold text-slate-400';
+        label.innerText = field.label;
+
+        let input;
+        const val = getVal(data, field.id) || '';
+
+        if (field.type === 'select') {
+            input = document.createElement('select');
+            input.className = 'w-full p-3 bg-slate-900 rounded-xl text-sm border border-white/10';
+            field.options.forEach(opt => {
+                const option = document.createElement('option');
+                option.value = opt;
+                option.innerText = opt;
+                if (val === opt || (field.id === 'الحالة' && val === 'نشط' && opt === 'متاح')) option.selected = true;
+                input.appendChild(option);
+            });
+        } else {
+            input = document.createElement('input');
+            input.type = field.type;
+            input.className = 'w-full p-3 bg-slate-900 rounded-xl text-sm border border-white/10';
+            input.value = val;
+            if (field.id === 'كود المدرسة' && currentEditId) input.readOnly = true; // Prevent ID change on edit
+        }
+
+        input.id = `field_${field.id}`;
+        div.appendChild(label);
+        div.appendChild(input);
+        form.appendChild(div);
+    });
+}
+
+async function saveMgmtRecord() {
+    const config = MGMT_CONFIG[currentMgmtType];
+    const formData = {};
+
+    config.fields.forEach(field => {
+        const el = document.getElementById(`field_${field.id}`);
+        formData[field.id] = el.value;
+    });
+
+    const action = currentEditId ? 'update' : 'add';
+    const idKey = config.fields[0].id; // e.g. 'كود المدرسة'
+    const recordId = currentEditId || formData[idKey];
+
+    // Update UI Optimistically
+    if (currentEditId) {
+        const index = DATA[currentMgmtType].findIndex(i => String(getVal(i, idKey)) == String(currentEditId));
+        if (index !== -1) DATA[currentMgmtType][index] = { ...DATA[currentMgmtType][index], ...formData };
+    } else {
+        DATA[currentMgmtType].push(formData);
+    }
+
+    closeMgmtModal();
+    renderManagementTable(currentMgmtType);
+    showToast('تم الحفظ محلياً.. جاري المزامنة', '⏳');
+
+    // Send to Backend
+    // For update: need { action: 'update', type: '...', id: '...', data: formData }
+    // For add: need { type: '...', ...formData } (no action needed based on code.gs fallback, or implicit)
+
+    // We construct the payload here
+    let payload = {
+        type: currentMgmtType, // 'schools', 'supervisors' etc. code.gs will normalize this
+        ...formData
+    };
+
+    if (action === 'update') {
+        payload = {
+            action: 'update',
+            type: currentMgmtType,
+            id: currentEditId,
+            data: formData
+        };
+    }
+    // If action is add, we just send type and formData (which is merged above).
+    // Note: For 'add', we might need specific field mappings like 'schoolName' depending on code.gs legacy.
+    // Let's ensure code.gs handles the field names from formData correctly. 
+    // code.gs expects 'schoolName', 'schoolCode' etc for Add. 
+    // formData has 'اسم المدرسة', 'كود المدرسة'.
+    // We MIGHT need to map these for 'add' if code.gs relies on English keys for Add.
+    // Checking code.gs: it expects data.schoolName...
+    // We need to map Arabic keys to English keys for ADD operation.
+
+    if (action === 'add') {
+        if (currentMgmtType === 'schools') {
+            payload.schoolName = formData['اسم المدرسة'];
+            payload.schoolCode = formData['كود المدرسة'];
+            payload.guidanceCode = formData['كود التوجيه'];
+            payload.stage = formData['المرحلة'];
+            payload.type = 'school'; // Force singular for legacy add block
+        } else if (currentMgmtType === 'supervisors') {
+            payload.supName = formData['اسم الموجه'];
+            payload.supCode = formData['كود الموجه'];
+            payload.guidanceCode = formData['كود التوجيه'];
+            payload.status = formData['الحالة'];
+            payload.type = 'supervisor';
+        } else if (currentMgmtType === 'guidance') {
+            payload.guidanceName = formData['اسم التوجيه'];
+            payload.guidanceCode = formData['كود التوجيه'];
+            payload.type = 'guidance';
+        }
+    }
+
+    const gasUrl = document.getElementById('gasUrl').value;
+    if (gasUrl) {
+        try {
+            await fetch(gasUrl, { method: 'POST', mode: 'no-cors', body: JSON.stringify(payload) });
+            showToast('تم الإرسال لقاعدة البيانات', '✅');
+        } catch (e) {
+            showToast('خطأ في المزامنة', '❌');
+        }
+    }
+}
+
+async function deleteRecord(id) {
+    if (!confirm('هل أنت متأكد من الحذف؟ لا يمكن التراجع عن هذا الإجراء.')) return;
+
+    const config = MGMT_CONFIG[currentMgmtType];
+    const idKey = config.fields[0].id;
+
+    // UI Update
+    DATA[currentMgmtType] = DATA[currentMgmtType].filter(item => String(getVal(item, idKey)) != String(id));
+    renderManagementTable(currentMgmtType);
+
+    // Backend
+    // Send { action: 'delete', type: 'schools', id: id }
+    const gasUrl = document.getElementById('gasUrl').value;
+    if (gasUrl) {
+        try {
+            await fetch(gasUrl, {
+                method: 'POST',
+                mode: 'no-cors',
+                body: JSON.stringify({
+                    action: 'delete',
+                    type: currentMgmtType,
+                    id: id
+                })
+            });
+            showToast('تم الحذف من السيرفر', '🗑️');
+        } catch (e) { showToast('خطأ في الاتصال', '❌'); }
+    }
+}
+
+function capitalize(s) {
+    return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
+async function sendToBackend(action, data) {
+    const sheetId = localStorage.getItem('sheetId');
+    const gasUrl = localStorage.getItem('gasUrl');
+    if (!sheetId || !gasUrl) return false;
+
+    try {
+        await fetch(gasUrl, {
+            method: 'POST',
+            body: JSON.stringify({
+                action,
+                sheetId,
+                ...data
+            })
+        });
+        return true;
+    } catch {
+        showToast('فشل الاتصال بالخادم', '❌');
+        return false;
+    }
 }
