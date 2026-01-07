@@ -25,14 +25,36 @@ window.addEventListener('DOMContentLoaded', async () => {
     if (sheetInput) sheetInput.value = CONFIG.defaultSheetId;
     if (gasInput) gasInput.value = CONFIG.defaultGasUrl;
 
-    // Automatic Synchronization on Load
+    // 1. Try Loading from Local Cache First (Instant Load)
+    try {
+        const cached = localStorage.getItem('cachedData');
+        if (cached) {
+            const parsed = JSON.parse(cached);
+            DATA = parsed;
+            console.log("Loaded data from cache:", DATA);
+
+            // Restore Settings from Cache
+            if (DATA.settings) {
+                parseSettings(DATA.settings);
+                if (typeof loadSettingsToUI === 'function') loadSettingsToUI();
+            }
+
+            updateDashboard();
+            initLoginFilters();
+            renderAdminTable(); // Render tables from cache
+        }
+    } catch (e) {
+        console.error("Error loading cache:", e);
+    }
+
+    // 2. Automatic Background Sync
     if (CONFIG.defaultSheetId && CONFIG.defaultGasUrl) {
         console.log("Starting automatic background sync...");
-        const success = await loadDataFromServer(CONFIG.defaultSheetId);
-        if (success) {
-            updateDashboard();
-            // Silent init for supervisor dropdowns in background
-            initLoginFilters();
+        // Use fetchAllData if loadDataFromServer is just a wrapper or undefined in this scope
+        if (typeof fetchAllData === 'function') {
+            await fetchAllData(true); // Silent mode
+        } else if (typeof loadDataFromServer === 'function') {
+            await loadDataFromServer(CONFIG.defaultSheetId);
         }
     }
 });
@@ -104,27 +126,217 @@ function adminLogout() {
     showToast('تم تسجيل الخروج من لوحة الإدارة', 'ℹ️');
 }
 
-function switchAdminTab(tab) {
-    const views = ['sync', 'data', 'mandatory', 'results', 'raw'];
-    views.forEach(v => {
-        const viewEl = document.getElementById(`admin-view-${v}`);
-        if (viewEl) viewEl.classList.toggle('hidden', v !== tab);
+// (Redundant switchAdminTab removed - Unified version implemented below)
 
-        const btn = document.getElementById(`admin-tab-${v}`);
-        if (btn) {
-            btn.classList.toggle('bg-indigo-600', v === tab);
-            btn.classList.toggle('bg-slate-800', v !== tab);
-            btn.classList.toggle('text-slate-400', v !== tab);
-            btn.classList.toggle('text-white', v === tab);
-        }
-    });
-
-    if (tab === 'raw') renderRawData('schools');
-    if (tab === 'mandatory') renderMandatoryTable();
-    if (tab === 'data') renderManagementTable('schools');
-}
 
 // --- Data Fetching ---
+
+async function fetchAllData(silent = false) {
+    if (!silent) toggleLoader(true, "جاري تحميل البيانات...");
+    const gasUrl = document.getElementById('gasUrl')?.value || localStorage.getItem('gasUrl');
+
+    if (!gasUrl) {
+        if (!silent) toggleLoader(false);
+        if (!silent) showToast("يرجى إدخال رابط Google Apps Script", "error");
+        return;
+    }
+
+    try {
+        const response = await fetch(`${gasUrl}?action=getAll`);
+        const result = await response.json();
+
+        if (result.status === 'success') {
+            DATA.schools = result.data.schools || [];
+            DATA.supervisors = result.data.supervisors || [];
+            DATA.guidance = result.data.guidance || [];
+
+            // Load Settings if available
+            if (result.data.settings && result.data.settings.length > 0) {
+                parseSettings(result.data.settings);
+                DATA.settings = result.data.settings; // Save raw settings to DATA for caching
+            }
+
+            // Sync with local storage
+            localStorage.setItem('cachedData', JSON.stringify(DATA));
+
+            updateStats();
+            renderAdminTable();
+            if (typeof loadSettingsToUI === 'function') loadSettingsToUI(); // Ensure UI is updated
+            if (!silent) showToast("تم تحديث البيانات بنجاح", "success");
+        } else {
+            if (!silent) showToast("فشل في جلب البيانات", "error");
+        }
+    } catch (error) {
+        console.error(error);
+        if (!silent) showToast("حدث خطأ في الاتصال", "error");
+    } finally {
+        if (!silent) toggleLoader(false);
+    }
+}
+
+function formatPhone(val) {
+    if (val === undefined || val === null) return '';
+    let s = String(val).trim();
+    // If it's a mobile number missing the leading zero (10 digits starting with 1 in Egypt)
+    if (s.length === 10 && (s.startsWith('1') || s.startsWith('2') || s.startsWith('5'))) {
+        if (/^\d+$/.test(s)) return '0' + s;
+    }
+    return s;
+}
+
+function parseSettings(settingsArr) {
+    if (!settingsArr || !Array.isArray(settingsArr)) return;
+    const map = {};
+    const normalizeKey = (k) => String(k || '').trim().replace(/[\s_\-\.]/g, '').toLowerCase();
+
+    settingsArr.forEach(row => {
+        let k, v;
+        if (Array.isArray(row)) {
+            // New format: [Label, Value, Key]
+            // We prioritize row[2] (Technical Key) as the absolute identifier
+            if (row.length >= 3 && row[2]) {
+                k = row[2];
+                v = row[1];
+            } else if (row.length >= 2) {
+                k = row[0];
+                v = row[1];
+            }
+        } else if (typeof row === 'object') {
+            const keys = Object.keys(row);
+            const keyProp = keys.find(p => normalizeKey(p) === 'key');
+            const valProp = keys.find(p => normalizeKey(p) === 'value');
+
+            k = keyProp ? row[keyProp] : Object.values(row)[0];
+            v = valProp ? row[valProp] : (row.Value !== undefined ? row.Value : row.value);
+            if (!v && v !== 0 && keys.length > 1) v = Object.values(row)[1];
+        }
+        if (k) map[normalizeKey(k)] = v;
+    });
+
+    if (Object.keys(map).length === 0) return;
+
+    const setIfMatch = (targetKey, setter) => {
+        const norm = normalizeKey(targetKey);
+        if (map[norm] !== undefined) setter(map[norm]);
+    };
+
+    setIfMatch('governorate', v => SETTINGS.governorate = String(v || '').trim());
+    setIfMatch('directorate', v => SETTINGS.directorate = String(v || '').trim());
+    setIfMatch('academicYear', v => SETTINGS.academicYear = String(v || '').trim());
+    setIfMatch('semester', v => SETTINGS.semester = String(v || '').trim());
+
+    setIfMatch('officials_gm_name', v => SETTINGS.officials.gm.name = String(v || '').trim());
+    setIfMatch('officials_gm_title', v => SETTINGS.officials.gm.title = String(v || '').trim());
+    setIfMatch('officials_gm_phone', v => SETTINGS.officials.gm.phone = formatPhone(v));
+
+    setIfMatch('officials_deputy_name', v => SETTINGS.officials.deputy.name = String(v || '').trim());
+    setIfMatch('officials_deputy_title', v => SETTINGS.officials.deputy.title = String(v || '').trim());
+    setIfMatch('officials_deputy_phone', v => SETTINGS.officials.deputy.phone = formatPhone(v));
+
+    setIfMatch('officials_security_name', v => SETTINGS.officials.security.name = String(v || '').trim());
+    setIfMatch('officials_security_title', v => SETTINGS.officials.security.title = String(v || '').trim());
+    setIfMatch('officials_security_phone', v => SETTINGS.officials.security.phone = formatPhone(v));
+
+    setIfMatch('officials_mgr_primary', v => SETTINGS.officials.managers.primary = String(v || '').trim());
+    setIfMatch('officials_mgr_primary_phone', v => SETTINGS.officials.managers.primaryPhone = formatPhone(v));
+
+    setIfMatch('officials_mgr_prep', v => SETTINGS.officials.managers.prep = String(v || '').trim());
+    setIfMatch('officials_mgr_prep_phone', v => SETTINGS.officials.managers.prepPhone = formatPhone(v));
+
+    setIfMatch('officials_mgr_sec', v => SETTINGS.officials.managers.secondary = String(v || '').trim());
+    setIfMatch('officials_mgr_sec_phone', v => SETTINGS.officials.managers.secondaryPhone = formatPhone(v));
+
+    if (typeof loadSettingsToUI === 'function') loadSettingsToUI();
+}
+
+function loadSettingsToUI() {
+    if (!document.getElementById('set_governorate')) return;
+
+    document.getElementById('set_governorate').value = SETTINGS.governorate || '';
+    document.getElementById('set_directorate').value = SETTINGS.directorate || '';
+    document.getElementById('set_year').value = SETTINGS.academicYear || '';
+    document.getElementById('set_semester').value = SETTINGS.semester || '';
+
+    document.getElementById('set_gm_name').value = SETTINGS.officials.gm.name || '';
+    document.getElementById('set_gm_title').value = SETTINGS.officials.gm.title || '';
+    document.getElementById('set_gm_phone').value = SETTINGS.officials.gm.phone || '';
+
+    document.getElementById('set_deputy_name').value = SETTINGS.officials.deputy.name || '';
+    document.getElementById('set_deputy_title').value = SETTINGS.officials.deputy.title || '';
+    document.getElementById('set_deputy_phone').value = SETTINGS.officials.deputy.phone || '';
+
+    document.getElementById('set_security_name').value = SETTINGS.officials.security.name || '';
+    document.getElementById('set_security_title').value = SETTINGS.officials.security.title || '';
+    document.getElementById('set_security_phone').value = SETTINGS.officials.security.phone || '';
+
+    document.getElementById('set_mgr_primary').value = SETTINGS.officials.managers.primary || '';
+    document.getElementById('set_mgr_primary_phone').value = SETTINGS.officials.managers.primaryPhone || '';
+
+    document.getElementById('set_mgr_prep').value = SETTINGS.officials.managers.prep || '';
+    document.getElementById('set_mgr_prep_phone').value = SETTINGS.officials.managers.prepPhone || '';
+
+    document.getElementById('set_mgr_sec').value = SETTINGS.officials.managers.secondary || '';
+    document.getElementById('set_mgr_sec_phone').value = SETTINGS.officials.managers.secondaryPhone || '';
+}
+
+async function saveSettings() {
+    const gasUrl = document.getElementById('gasUrl')?.value || localStorage.getItem('gasUrl');
+    if (!gasUrl) return showToast("يرجى إدخال رابط Google Apps Script", "error");
+
+    // Robust Triplets: [Label (Column A), Value (Column B), TechnicalKey (Column C)]
+    const settingsTriplets = [
+        ["المحافظة", document.getElementById('set_governorate').value, "governorate"],
+        ["الإدارة التعليمية", document.getElementById('set_directorate').value, "directorate"],
+        ["العام الدراسي", document.getElementById('set_year').value, "academicYear"],
+        ["الفصل الدراسي", document.getElementById('set_semester').value, "semester"],
+
+        ["اسم مدير عام الإدارة", document.getElementById('set_gm_name').value, "officials_gm_name"],
+        ["لقب مدير عام الإدارة", document.getElementById('set_gm_title').value, "officials_gm_title"],
+        ["هاتف مدير عام الإدارة", document.getElementById('set_gm_phone').value, "officials_gm_phone"],
+
+        ["اسم وكيل الإدارة", document.getElementById('set_deputy_name').value, "officials_deputy_name"],
+        ["لقب وكيل الإدارة", document.getElementById('set_deputy_title').value, "officials_deputy_title"],
+        ["هاتف وكيل الإدارة", document.getElementById('set_deputy_phone').value, "officials_deputy_phone"],
+
+        ["اسم مسؤول أمن الإدارة", document.getElementById('set_security_name').value, "officials_security_name"],
+        ["لقب مسؤول أمن الإدارة", document.getElementById('set_security_title').value, "officials_security_title"],
+        ["هاتف مسؤول أمن الإدارة", document.getElementById('set_security_phone').value, "officials_security_phone"],
+
+        ["مدير التعليم الابتدائي", document.getElementById('set_mgr_primary').value, "officials_mgr_primary"],
+        ["هاتف مدير الابتدائي", document.getElementById('set_mgr_primary_phone').value, "officials_mgr_primary_phone"],
+
+        ["مدير التعليم الإعدادي", document.getElementById('set_mgr_prep').value, "officials_mgr_prep"],
+        ["هاتف مدير الإعدادي", document.getElementById('set_mgr_prep_phone').value, "officials_mgr_prep_phone"],
+
+        ["مدير التعليم الثانوي", document.getElementById('set_mgr_sec').value, "officials_mgr_sec"],
+        ["هاتف مدير الثانوي", document.getElementById('set_mgr_sec_phone').value, "officials_mgr_sec_phone"]
+    ];
+
+    try {
+        toggleLoader(true, "جاري حفظ الإعدادات...");
+        const response = await fetch(gasUrl, {
+            method: 'POST',
+            body: JSON.stringify({
+                type: 'settings',
+                settings: settingsTriplets
+            })
+        });
+
+        const result = await response.json();
+        if (result.status === 'success') {
+            showToast("تم حفظ الإعدادات بنجاح ✅", "success");
+            // Force re-fetch to sync with the new three-column structure
+            await fetchAllData(true);
+        } else {
+            showToast("فشل في حفظ الإعدادات ❌", "error");
+        }
+    } catch (error) {
+        console.error(error);
+        showToast("خطأ في الاتصال بالخادم", "error");
+    } finally {
+        toggleLoader(false);
+    }
+}
 
 function getVal(obj, key) {
     if (!obj) return '';
@@ -639,81 +851,8 @@ function manualOverride(schoolId, supName) {
 
 // ... (Functions in between)
 
-function renderAdminTable() {
-    const body = document.getElementById('resultBody');
-    if (!body) return;
+// (Redundant renderAdminTable removed - Checkbox-enabled version implemented below)
 
-    if (!DATA.final || DATA.final.length === 0) {
-        body.innerHTML = '<tr><td colspan="6" class="px-8 py-8 text-center text-slate-500">لا توجد نتائج للتوزيع بعد. يرجى الضغط على زر "توزيع وإصلاح" لبدء العملية.</td></tr>';
-        return;
-    }
-
-    // Create a map of current assignments for the dropdown
-    const assignmentMap = {};
-    DATA.final.forEach(s => {
-        if (s.finalSup) assignmentMap[s.finalSup] = getVal(s, 'اسم المدرسة');
-    });
-
-    body.innerHTML = DATA.final.map(s => {
-        const schoolCode = getVal(s, 'كود المدرسة');
-        let guidCode = getVal(s, 'كود التوجيه') || getVal(s, 'التوجيه') || getVal(s, 'الإدارة') || getVal(s, 'الادارة');
-
-        if (!guidCode && s.finalSupCode) {
-            const assignedSup = DATA.supervisors.find(sx => getVal(sx, 'كود التوجيه') == s.finalSupCode);
-            if (assignedSup) guidCode = getVal(assignedSup, 'كود التوجيه') || getVal(assignedSup, 'التوجيه');
-        }
-
-        const gName = getGuidanceName(guidCode);
-
-        // Badge Logic...
-        const method = s.method || 'تلقائي';
-        let badgeStyle = "bg-slate-800 text-slate-400";
-        if (method.includes('إجباري') || method.includes('الملف')) badgeStyle = "bg-rose-500/20 text-rose-400 border border-rose-500/30";
-        else if (method.includes('رغبة')) badgeStyle = "bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 font-bold";
-        else if (method.includes('تعديل')) badgeStyle = "bg-amber-500/20 text-amber-400 border border-amber-500/30";
-
-        return `
-        <tr class="hover:bg-white/5 transition-colors">
-            <td class="px-8 py-5 font-bold">${getVal(s, 'اسم المدرسة')}</td>
-            <td class="px-8 py-5">
-                <select onchange="manualOverride('${schoolCode}', this.value)" 
-                        class="bg-slate-900 border border-white/10 rounded-lg px-3 py-1 text-sm w-full focus:bg-slate-800 focus:border-indigo-500 outline-none">
-                    <option value="">-- غير مسكن --</option>
-                    ${DATA.supervisors
-                .filter(sup => {
-                    const status = (getVal(sup, 'الحالة') || getVal(sup, 'نشط') || 'نشط').trim();
-                    return status !== 'غير نشط' && status !== '0';
-                })
-                .map(sup => {
-                    const supName = getVal(sup, 'اسم الموجه');
-                    const assignedSchool = assignmentMap[supName];
-                    const isCurrent = s.finalSup === supName;
-
-                    let label = supName;
-                    if (assignedSchool && !isCurrent) label += ` (⛔ ${assignedSchool})`; // Mark if taken
-
-                    return `<option value="${supName}" ${isCurrent ? 'selected' : ''} ${assignedSchool && !isCurrent ? 'class="text-rose-400 bg-rose-900/20"' : ''}>${label}</option>`;
-                }).join('')}
-                </select>
-            </td>
-            <td class="px-8 py-5 text-slate-400 font-mono text-xs">${gName}</td>
-            <td class="px-8 py-5 text-indigo-300 text-xs">${getVal(s, 'المرحلة')}</td>
-            <td class="px-8 py-5 text-[10px] font-bold">
-                <span class="px-2 py-1 rounded ${badgeStyle}">${method}</span>
-            </td>
-            <td class="px-8 py-5 text-center">
-                <button onclick="generateIndividualLetters('${schoolCode}')" 
-                        class="p-2 hover:bg-white/10 rounded-lg text-amber-500 transition-colors" title="طباعة الخطاب">
-                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" 
-                              d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z" />
-                    </svg>
-                </button>
-            </td>
-        </tr>
-        `;
-    }).join('');
-}
 
 async function autoSaveDistribution() {
     const results = DATA.final.map(row => ({
@@ -882,7 +1021,7 @@ function renderAdminTable() {
     if (!body) return;
 
     if (!DATA.final || DATA.final.length === 0) {
-        body.innerHTML = '<tr><td colspan="6" class="px-8 py-8 text-center text-slate-500">لا توجد نتائج للتوزيع بعد. يرجى الضغط على زر "توزيع وإصلاح" لبدء العملية.</td></tr>';
+        body.innerHTML = '<tr><td colspan="7" class="px-8 py-8 text-center text-slate-500">لا توجد نتائج للتوزيع بعد. يرجى الضغط على زر "توزيع وإصلاح" لبدء العملية.</td></tr>';
         return;
     }
 
@@ -920,6 +1059,9 @@ function renderAdminTable() {
 
         return `
         <tr class="hover:bg-white/5 transition-colors">
+            <td class="px-8 py-5 text-center">
+                <input type="checkbox" class="letter-checkbox w-4 h-4 rounded border-white/10 bg-slate-800 text-indigo-600 focus:ring-indigo-500" data-code="${schoolCode}">
+            </td>
             <td class="px-8 py-5 font-bold">${getVal(s, 'اسم المدرسة')}</td>
             <td class="px-8 py-5">
                 <select onchange="manualOverride('${schoolCode}', this.value)" 
@@ -953,6 +1095,12 @@ function renderAdminTable() {
         </tr>
         `;
     }).join('');
+}
+
+function toggleSelectAllLetters() {
+    const parent = document.getElementById('selectAllLetters');
+    const checkboxes = document.querySelectorAll('.letter-checkbox');
+    checkboxes.forEach(cb => cb.checked = parent.checked);
 }
 
 function renderRawData(type) {
@@ -1072,6 +1220,7 @@ async function handleLogin() {
 
     const code = getVal(sup, 'كود الموجه');
     DATA.activeUser = sup;
+    currentSupervisor = sup; // Sync for new helpers
     const name = getVal(sup, 'اسم الموجه');
     const guidCode = getVal(sup, 'كود التوجيه');
     const guidObj = DATA.guidance.find(g => getVal(g, 'كود التوجيه') == guidCode);
@@ -1088,13 +1237,39 @@ async function handleLogin() {
 
     document.getElementById('view-supervisor').children[0].classList.add('hidden');
     document.getElementById('wishesSection').classList.remove('hidden');
+
+    // 3. Check for Assignment & Update Mobile UI
+    checkSupervisorAssignment();
+
+    // 4. Update labels for accordions
+    setTimeout(() => {
+        [1, 2, 3, 4].forEach(i => updateWishLabel(i));
+    }, 100);
 }
 
 function switchAdminTab(tabId) {
-    // Nav Logic
-    document.querySelectorAll('[id^="admin-view-"]').forEach(el => el.classList.add('hidden'));
-    document.getElementById(`admin-view-${tabId}`).classList.remove('hidden');
+    // 1. Update Navigation Buttons
+    ['sync', 'data', 'status', 'mandatory', 'results', 'raw', 'settings'].forEach(t => {
+        const btn = document.getElementById(`admin-tab-${t}`);
+        if (btn) {
+            if (t === tabId) {
+                btn.classList.remove('bg-slate-800', 'text-slate-400');
+                btn.classList.add('bg-indigo-600', 'text-white', 'tab-active');
+            } else {
+                btn.classList.remove('bg-indigo-600', 'text-white', 'tab-active');
+                btn.classList.add('bg-slate-800', 'text-slate-400');
+            }
+        }
+    });
 
+    // 2. Hide All Admin Views
+    document.querySelectorAll('[id^="admin-view-"]').forEach(el => el.classList.add('hidden'));
+
+    // 3. Show Selected View
+    const target = document.getElementById(`admin-view-${tabId}`);
+    if (target) target.classList.remove('hidden');
+
+    // 4. Trigger Tab-specific Logic
     if (tabId === 'status') {
         renderStatusTable();
     } else if (tabId === 'data') {
@@ -1103,6 +1278,8 @@ function switchAdminTab(tabId) {
         renderAdminTable();
     } else if (tabId === 'mandatory') {
         renderMandatoryTable();
+    } else if (tabId === 'settings') {
+        loadSettingsToUI();
     }
 }
 
@@ -1448,28 +1625,110 @@ function exportResults() {
             'آلية التوزيع': s.method
         };
     }));
-
-    const blob = new Blob(["\uFEFF" + csvData], { type: 'text/csv;charset=utf-8;' });
-    const link = document.createElement("a");
-    link.href = URL.createObjectURL(blob);
-    link.setAttribute("download", `توزيع_الموجهين_${new Date().toLocaleDateString()}.csv`);
     document.body.appendChild(link);
+    link.click();
     document.body.removeChild(link);
 }
 
-// --- Official Reports System ---
+// --- Global Settings & Reports ---
 
-const OFFICIALS = {
-    gm: { name: "أ / سعاد محمد", title: "مدير عام الإدارة", phone: "01120309568" },
-    deputy: { name: "أ / غادة محمد", title: "وكيل الإدارة", phone: "01100892438" },
-    security: { name: "أ / وجيه عبد العال", title: "مسئول أمن الإدارة", phone: "01100686383" },
-    managers: [
-        { stage: "المرحلة الابتدائية", name: "أ / هشام محمود كامل", phone: "01124589939" },
-        { stage: "المرحلة الإعدادية", name: "أ / داليا عمر", phone: "01287089498" },
-        { stage: "المرحلة الثانوية", name: "أ / أحلام محمد", phone: "01121489382" }
-    ]
+// Default Settings
+let SETTINGS = {
+    governorate: "محافظة الجيزة",
+    directorate: "إدارة العمرانية التعليمية",
+    academicYear: "2025/2026",
+    semester: "نصف العام",
+    officials: {
+        gm: { name: "", title: "مدير عام الإدارة", phone: "" },
+        deputy: { name: "غادة سليمان", title: "وكيل الإدارة", phone: "" },
+        security: { name: "أ / وجيه عبد العال", title: "مسئول أمن الإدارة", phone: "" },
+        managers: {
+            primary: "أ / هشام محمود كامل",
+            primaryPhone: "",
+            prep: "أ / داليا عمر",
+            prepPhone: "",
+            secondary: "أ / أحلام محمد",
+            secondaryPhone: ""
+        }
+    }
 };
 
+// Legacy Support (Mapping SETTINGS to OFFICIALS structure used in reports)
+const OFFICIALS = {
+    get gm() { return { name: SETTINGS.officials.gm.name, title: SETTINGS.officials.gm.title, phone: SETTINGS.officials.gm.phone }; },
+    get deputy() { return { name: SETTINGS.officials.deputy.name, title: SETTINGS.officials.deputy.title, phone: SETTINGS.officials.deputy.phone }; },
+    get security() { return { name: SETTINGS.officials.security.name, title: SETTINGS.officials.security.title, phone: SETTINGS.officials.security.phone }; },
+    get managers() {
+        return [
+            { stage: "المرحلة الابتدائية", name: SETTINGS.officials.managers.primary, phone: SETTINGS.officials.managers.primaryPhone },
+            { stage: "المرحلة الإعدادية", name: SETTINGS.officials.managers.prep, phone: SETTINGS.officials.managers.prepPhone },
+            { stage: "المرحلة الثانوية", name: SETTINGS.officials.managers.secondary, phone: SETTINGS.officials.managers.secondaryPhone }
+        ];
+    }
+};
+
+const PRINT_STYLES = `
+    <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;900&display=swap" rel="stylesheet">
+    <style>
+        @page { size: A4; margin: 0.5cm; }
+        body { 
+            font-family: 'Cairo', sans-serif; 
+            direction: rtl; 
+            padding: 0; 
+            margin: 0; 
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
+            text-rendering: optimizeLegibility;
+            background: white;
+        }
+        .report-page { 
+            page-break-after: always; 
+            break-inside: avoid;
+            min-height: 290mm; 
+            padding: 15mm; 
+            box-sizing: border-box;
+            position: relative;
+        }
+        .report-header { display: flex; justify-content: space-between; border-bottom: 2px solid #000; padding-bottom: 10px; margin-bottom: 15px; }
+        .report-title-box { text-align: center; border: 2px solid #000; padding: 5px; border-radius: 8px; font-weight: bold; background: #f8f9fa; }
+        
+        /* High Quality Font Rendering for Print */
+        * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
+        h1, h2, h3, p, span, div, li, td, th { color: #000 !important; }
+        
+        table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+        th { background: #f2f2f2 !important; border: 1px solid #000; padding: 8px; font-size: 11px; }
+        td { border: 1px solid #000; padding: 6px; font-size: 11px; text-align: center; }
+        tr { page-break-inside: avoid; break-inside: avoid; }
+
+        @media screen {
+            body { background: #f1f5f9; padding: 40px; }
+            .report-page { 
+                width: 210mm; 
+                margin: 0 auto 30px auto; 
+                box-shadow: 0 10px 30px rgba(0,0,0,0.1);
+                border: 1px solid #e2e8f0;
+                border-radius: 4px;
+            }
+        }
+    </style>
+`;
+
+function triggerPrint(win) {
+    if (win.document.fonts) {
+        win.document.fonts.ready.then(() => {
+            setTimeout(() => {
+                win.print();
+            }, 800);
+        });
+    } else {
+        win.onload = () => {
+            setTimeout(() => {
+                win.print();
+            }, 1000);
+        };
+    }
+}
 function generateOfficialGeneralReport() {
     // 1. Group DATA.final by Guidance
     const grouped = {};
@@ -1514,9 +1773,9 @@ function generateOfficialGeneralReport() {
                         <div style="font-weight:900; font-size:16px;">كشف توزيع الموجهين المقيمين</div>
                         <div style="font-size:13px; margin-top:3px; font-weight:normal;">لمتابعة امتحانات نصف العام 2025/2026م</div>
                     </div>
-                    <div style="text-align:left">
+                     <div style="text-align:left">
                         <div style="width:70px; height:70px; border:2px solid #000; display:flex; align-items:center; justify-content:center; font-weight:bold; font-size:10px; background:#f8f9fa;">
-                             <img src="logo.png" style="width:100%; height:100%; object-fit:contain;" alt="شعار الإدارة">
+                             <img src="logo.png" style="width:100%; height:100%; object-fit:contain;" alt="شعار الإدارة" />
                         </div>
                         <p style="font-size:9px; margin-top:4px; font-weight:bold;">لجنة الإدارة</p>
                     </div>
@@ -1563,40 +1822,33 @@ function generateOfficialGeneralReport() {
     const printWindow = window.open('', '_blank', 'width=1000,height=800');
     if (!printWindow) return showToast("يرجى السماح بالنوافذ المنبثقة للطباعة", "⚠️");
 
-    const css = `
-        <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;900&display=swap" rel="stylesheet">
-        <style>
-            body { font-family: 'Cairo', sans-serif; direction: rtl; padding: 20px; }
-            .report-page { page-break-after: always; min-height: 100vh; position: relative; }
-            .report-header { display: flex; justify-content: space-between; border-bottom: 2px solid #000; padding-bottom: 10px; margin-bottom: 15px; }
-            .report-title-box { text-align: center; border: 2px solid #000; padding: 5px; border-radius: 8px; }
-            .official-table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 11px; }
-            .official-table th, .official-table td { border: 1px solid #000; padding: 4px 6px; text-align: center; }
-            .signature-block { text-align: center; margin-top: 30px; }
-            @media print {
-                @page { size: A4; margin: 0.5cm; }
-                body { margin: 0; padding: 0; }
-                .no-print { display: none; }
-            }
-        </style>
-    `;
-
-    printWindow.document.write(`<html><head><title>الكشف العام</title>${css}</head><body>${fullHtml}</body></html>`);
+    printWindow.document.write(`<html><head><title>الكشف العام</title>${PRINT_STYLES}</head><body>${fullHtml}</body></html>`);
     printWindow.document.close();
 
     // Slight delay to ensure content renders then print
-    printWindow.onload = () => {
-        setTimeout(() => {
-            printWindow.print();
-            // printWindow.close(); // Optional: Close after print
-        }, 500);
-    };
+    triggerPrint(printWindow);
 }
 
 function generateIndividualLetters(specificSchoolCode = null) {
     let targetData = DATA.final.filter(s => s.finalSup);
+
     if (specificSchoolCode) {
         targetData = targetData.filter(s => String(getVal(s, 'كود المدرسة')).trim() === String(specificSchoolCode).trim());
+    } else {
+        // Multi-select logic
+        const checkboxes = document.querySelectorAll('.letter-checkbox:checked');
+        if (checkboxes.length > 0) {
+            const selectedCodes = Array.from(checkboxes).map(cb => cb.getAttribute('data-code'));
+            targetData = targetData.filter(s => selectedCodes.includes(String(getVal(s, 'كود المدرسة')).trim()));
+        } else if (confirm("لم يتم اختيار أي مدارس. هل تريد طباعة جميع خطابات التكليف؟")) {
+            // Proceed with all
+        } else {
+            return;
+        }
+    }
+
+    if (targetData.length === 0) {
+        return showToast("لا توجد بيانات للطباعة", "⚠️");
     }
 
     let fullHtml = targetData.map((s, idx) => {
@@ -1682,7 +1934,7 @@ function generateIndividualLetters(specificSchoolCode = null) {
                 </div>
 
                 <div style="border:1.5px solid #000; padding:0;">
-                    <div style="background:#000; color:#fff; text-align:center; font-weight:bold; padding:2px; font-size:10px;">جدول تليفونات مديرى المراحل</div>
+                    <div style="background:#e9ecef; color:#000; text-align:center; font-weight:900; padding:3px; font-size:10px; border-bottom:1.5px solid #000;">جدول تليفونات مديرى المراحل</div>
                     <div style="font-size:10px; padding:2px;">
                         ${OFFICIALS.managers.map(m => `
                             <div style="display:flex; justify-content:space-between; border-bottom:1px solid #eee; padding:1px;">
@@ -1714,33 +1966,114 @@ function generateIndividualLetters(specificSchoolCode = null) {
         </div>
         `;
     }).join('');
-    // Use New Window Strategy
-    const printWindow = window.open('', '_blank', 'width=800,height=800');
+
+    const printWindow = window.open('', '_blank', 'width=1000,height=800');
     if (!printWindow) return showToast("يرجى السماح بالنوافذ المنبثقة", "⚠️");
 
-    const css = `
-        <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;900&display=swap" rel="stylesheet">
-        <style>
-            body { font-family: 'Cairo', sans-serif; direction: rtl; padding: 20px; }
-            .report-page { page-break-after: always; min-height: 95vh; position: relative; border: 1px dashed #ccc; padding: 20px; margin-bottom: 20px; }
-            .report-header { display: flex; justify-content: space-between; border-bottom: 2px solid #000; padding-bottom: 15px; margin-bottom: 20px; }
-            .report-title-box { text-align: center; border: 2px solid #000; padding: 5px; border-radius: 8px; font-weight: bold; background: #f8f9fa; }
-            @media print {
-                @page { size: A4; margin: 1cm; }
-                .report-page { border: none; margin: 0; }
-                body { margin: 0; padding: 0; }
-            }
-        </style>
-    `;
-
-    printWindow.document.write(`<html><head><title>خطابات التكليف</title>${css}</head><body>${fullHtml}</body></html>`);
+    printWindow.document.write(`<html><head><title>خطابات التكليف</title>${PRINT_STYLES}</head><body>${fullHtml}</body></html>`);
     printWindow.document.close();
+    triggerPrint(printWindow);
+}
 
-    printWindow.onload = () => {
-        setTimeout(() => {
-            printWindow.print();
-        }, 500);
+function generateCategorizedReport() {
+    // 1. Filter Assigned Schools
+    const assignments = DATA.final.filter(s => s.finalSup);
+    if (assignments.length === 0) return showToast("لا توجد توزيعات لعرضها", "⚠️");
+
+    // 2. Define Groups
+    const groups = {
+        'P_OFF': { label: 'توزيع الموجهين المقيمين - المرحلة الابتدائية (رسمي)', schools: [] },
+        'E_OFF': { label: 'توزيع الموجهين المقيمين - المرحلة الإعدادية (رسمي)', schools: [] },
+        'S_OFF': { label: 'توزيع الموجهين المقيمين - المرحلة الثانوية (رسمي)', schools: [] },
+        'PVT': { label: 'توزيع الموجهين المقيمين - المدارس الخاصة والدولية', schools: [] }
     };
+
+    assignments.forEach(s => {
+        const stage = (getVal(s, 'المرحلة') || '').trim();
+        const rawType = (getVal(s, 'النوعية') || '').trim();
+
+        // Official Schools: officially defined as containing 'رسمي' or 'رسمى' or 'ثقافي' or 'ثقافى'
+        const isOfficial = rawType.includes('رسمي') || rawType.includes('رسمى') || rawType.includes('ثقافي') || rawType.includes('ثقافى');
+
+        if (!isOfficial) {
+            groups.PVT.schools.push(s);
+        } else {
+            // Stage matching with priority (Primary > Prep > Secondary)
+            if (stage.includes('ابتدائ')) groups.P_OFF.schools.push(s);
+            else if (stage.includes('اعداد')) groups.E_OFF.schools.push(s);
+            else if (stage.includes('ثانو')) groups.S_OFF.schools.push(s);
+            else groups.P_OFF.schools.push(s); // Fallback
+        }
+    });
+
+    // 3. Generate HTML per Page
+    const fullHtml = Object.values(groups).filter(g => g.schools.length > 0).map(group => {
+        // Sort within group: Type then Name
+        group.schools.sort((a, b) => {
+            const tA = getVal(a, 'النوعية') || '';
+            const tB = getVal(b, 'النوعية') || '';
+            if (tA !== tB) return tA.localeCompare(tB, 'ar');
+            return String(getVal(a, 'اسم المدرسة')).localeCompare(String(getVal(b, 'اسم المدرسة')), 'ar');
+        });
+
+        const rowsHtml = group.schools.map((s, idx) => {
+            const sup = DATA.supervisors.find(su => getVal(su, 'كود الموجه') == s.finalSupCode);
+            const phone = sup ? (getVal(sup, 'تليفون الموجه') || getVal(sup, 'التليفون') || '-') : '-';
+            return `
+                <tr>
+                    <td>${idx + 1}</td>
+                    <td style="text-align:right">
+                        ${getVal(s, 'اسم المدرسة')}
+                        <div style="font-size:8px; color:#666;">(${getVal(s, 'النوعية')})</div>
+                    </td>
+                    <td>${s.finalSup || '-'}</td>
+                    <td dir="ltr" style="text-align:center;">${phone}</td>
+                </tr>
+            `;
+        }).join('');
+
+        return `
+            <div class="report-page page-break">
+                <div class="report-header">
+                    <div style="text-align:right">
+                        <p style="font-weight:900; font-size:14px;">محافظة الجيزة</p>
+                        <p style="font-weight:900; font-size:14px;">إدارة العمرانية التعليمية</p>
+                        <p style="font-size:11px; margin-top:3px;">تاريخ: ${new Date().toLocaleDateString('ar-EG')}</p>
+                    </div>
+                    <div class="report-title-box" style="flex:1; margin:0 15px;">
+                        <div style="font-weight:900; font-size:16px;">${group.label}</div>
+                    </div>
+                    <div style="text-align:left">
+                        <div style="width:70px; height:70px; border:2px solid #000; display:flex; align-items:center; justify-content:center; background:#f8f9fa;">
+                             <img src="logo.png" style="width:100%; height:100%; object-fit:contain;" alt="شعار الإدارة" />
+                        </div>
+                        <p style="font-size:8px; margin-top:3px; font-weight:bold; text-align:center;">لجنة الإدارة</p>
+                    </div>
+                </div>
+                
+                <table class="official-table" style="margin-top:20px;">
+                    <thead>
+                        <tr style="background:#e9ecef;">
+                            <th style="width:50px;">م</th>
+                            <th>اسم المدرسة</th>
+                            <th style="width:200px;">اسم الموجه المقيم</th>
+                            <th style="width:120px;">رقم التليفون</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${rowsHtml}
+                    </tbody>
+                </table>
+            </div>
+        `;
+    }).join('');
+
+    const printWindow = window.open('', '_blank', 'width=1000,height=800');
+    if (!printWindow) return showToast("يرجى السماح بالنوافذ المنبثقة", "⚠️");
+
+    printWindow.document.write(`<html><head><title>تقرير توزيع الموجهين</title>${PRINT_STYLES}</head><body>${fullHtml}</body></html>`);
+    printWindow.document.close();
+    triggerPrint(printWindow);
 }
 
 // --- Comprehensive Data Management System ---
@@ -1775,7 +2108,7 @@ function generateBlankLetter() {
                 </div>
                 <div style="text-align:left">
                     <div style="width:80px; height:80px; border:2.5px solid #000; display:flex; align-items:center; justify-content:center; background:#f8f9fa;">
-                        <img src="logo.png" style="width:100%; height:100%; object-fit:contain;" alt="شعار الإدارة">
+                        <img src="logo.png" style="width:100%; height:100%; object-fit:contain;" alt="شعار الإدارة" />
                     </div>
                     <p style="font-size:8px; margin-top:3px; font-weight:bold; text-align:center;">لجنة الإدارة</p>
                 </div>
@@ -1799,7 +2132,7 @@ function generateBlankLetter() {
             <div style="margin:5px 0; border:1.5px solid #000; padding:5px; position:relative;">
                 <p style="font-weight:bold; margin-bottom:5px; font-size:11px;">السيد / <span style="border-bottom:1px dashed #000; padding:0 10px;">.........................................</span> &nbsp;&nbsp; توجيه: <span style="border-bottom:1px dashed #000; padding:0 10px;">.........................................</span></p>
                 <p style="text-align:center; font-weight:bold; margin:5px 0; font-size:11px;">تم تكليفكم لمتابعة امتحانات نصف العام 2025 / 2026 لصفوف النقل بمدرسة :</p>
-                
+
                 <div style="display:flex; justify-content:center; gap:10px; margin:2px 0;">
                     <div style="border:2px solid #000; padding:4px 15px; font-size:1rem; font-weight:900; min-width:150px; text-align:center; background:#f9f9f9;">
                         ..................................................................
@@ -1830,7 +2163,7 @@ function generateBlankLetter() {
                 </div>
 
                 <div style="border:1.5px solid #000; padding:0;">
-                    <div style="background:#000; color:#fff; text-align:center; font-weight:bold; padding:2px; font-size:10px;">جدول تليفونات مديرى المراحل</div>
+                    <div style="background:#e9ecef; color:#000; text-align:center; font-weight:900; padding:3px; font-size:10px; border-bottom:1.5px solid #000;">جدول تليفونات مديرى المراحل</div>
                     <div style="font-size:10px; padding:2px;">
                         ${OFFICIALS.managers.map(m => `
                             <div style="display:flex; justify-content:space-between; border-bottom:1px solid #eee; padding:1px;">
@@ -1855,42 +2188,18 @@ function generateBlankLetter() {
                 </div>
                 <div style="text-align:center; width:200px;">
                     <p style="font-weight:bold;">مدير عام الإدارة</p>
-                    <br>
+                    <br />
                     <p style="font-weight:bold; font-size:1.1rem;">${OFFICIALS.gm.name}</p>
                 </div>
             </div>
         </div>
-    `;
+        `;
 
     const fullHtml = renderLetter({}, ''); // Render blank
 
-    const printWindow = window.open('', '_blank', 'width=800,height=800');
-    if (!printWindow) return showToast("يرجى السماح بالنوافذ المنبثقة", "⚠️");
-
-    // Reuse CSS
-    const css = `
-        <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;900&display=swap" rel="stylesheet">
-        <style>
-            body { font-family: 'Cairo', sans-serif; direction: rtl; padding: 20px; }
-            .report-page { page-break-after: always; min-height: 95vh; position: relative; border: 1px dashed #ccc; padding: 20px; margin-bottom: 20px; }
-            .report-header { display: flex; justify-content: space-between; border-bottom: 2px solid #000; padding-bottom: 15px; margin-bottom: 20px; }
-            .report-title-box { text-align: center; border: 2px solid #000; padding: 5px; border-radius: 8px; font-weight: bold; background: #f8f9fa; }
-            @media print {
-                @page { size: A4; margin: 1cm; }
-                .report-page { border: none; margin: 0; }
-                body { margin: 0; padding: 0; }
-            }
-        </style>
-    `;
-
-    printWindow.document.write(`<html><head><title>خطاب فارغ</title>${css}</head><body>${fullHtml}</body></html>`);
+    printWindow.document.write(`<html><head><title>خطاب فارغ</title>${PRINT_STYLES}</head><body>${fullHtml}</body></html>`);
     printWindow.document.close();
-
-    printWindow.onload = () => {
-        setTimeout(() => {
-            printWindow.print();
-        }, 500);
-    };
+    triggerPrint(printWindow);
 }
 
 function generateUnassignedReport() {
@@ -1908,14 +2217,14 @@ function generateUnassignedReport() {
 
     // 2. Generate Report HTML
     const rowsHtml = unassigned.map((s, idx) => `
-        <tr>
+        < tr >
             <td>${idx + 1}</td>
             <td>${getVal(s, 'اسم الموجه')}</td>
             <td>${getVal(s, 'كود الموجه')}</td>
             <td>${getGuidanceName(getVal(s, 'كود التوجيه'))}</td>
-            <td>${getVal(s, 'التخصص') || '-'}</td>
+            <td>${isSupervisorAvailable(s) ? '✅ نشط' : '❌ غير نشط'}</td>
         </tr>
-    `).join('');
+        `).join('');
 
     const fullHtml = `
         <div class="report-page">
@@ -1926,18 +2235,14 @@ function generateUnassignedReport() {
                     <p style="font-size:11px; margin-top:3px;">تاريخ: ${new Date().toLocaleDateString('ar-EG')}</p>
                 </div>
                 <div class="report-title-box" style="flex:1; margin:0 15px;">
-                    <div style="font-weight:900; font-size:16px;">تقرير الموجهين غير الموزعين</div>
-                    <div style="font-size:13px; margin-top:3px; font-weight:normal;">(المتاحين للعمل ولم يتم تكليفهم)</div>
+                    <div style="font-weight:900; font-size:16px;">الموجهين غير الموزعين</div>
+                    <div style="font-size:13px; margin-top:3px; font-weight:normal;">(لم يتم إسناد مدارس لهم)</div>
                 </div>
                 <div style="text-align:left">
                     <div style="width:70px; height:70px; border:2px solid #000; display:flex; align-items:center; justify-content:center; font-weight:bold; font-size:10px; background:#f8f9fa;">
-                         <img src="logo.png" style="width:100%; height:100%; object-fit:contain;" alt="شعار الإدارة">
+                         <img src="logo.png" style="width:100%; height:100%; object-fit:contain;" alt="شعار الإدارة" />
                     </div>
                 </div>
-            </div>
-
-            <div style="margin:20px 0; padding:10px; background:#f8f9fa; border:1px solid #ddd; text-align:center;">
-                <strong>إجمالي غير الموزعين: ${unassigned.length} موجه</strong>
             </div>
 
             <table class="official-table">
@@ -1945,9 +2250,8 @@ function generateUnassignedReport() {
                     <tr style="background:#e9ecef;">
                         <th style="width:50px;">م</th>
                         <th>اسم الموجه</th>
-                        <th>الكود</th>
                         <th>التوجيه</th>
-                        <th>التخصص</th>
+                        <th>الحالة</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -1961,33 +2265,15 @@ function generateUnassignedReport() {
                 <p style="font-weight:bold; font-size:1.05rem; margin-top:8px;">${OFFICIALS.gm.name}</p>
             </div>
         </div>
-    `;
+        `;
 
     // Print
     const printWindow = window.open('', '_blank', 'width=1000,height=800');
     if (!printWindow) return showToast("يرجى السماح بالنوافذ المنبثقة", "⚠️");
 
-    const css = `
-        <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;900&display=swap" rel="stylesheet">
-        <style>
-            body { font-family: 'Cairo', sans-serif; direction: rtl; padding: 20px; }
-            .report-page { page-break-after: always; min-height: 100vh; position: relative; }
-            .report-header { display: flex; justify-content: space-between; border-bottom: 2px solid #000; padding-bottom: 10px; margin-bottom: 15px; }
-            .report-title-box { text-align: center; border: 2px solid #000; padding: 5px; border-radius: 8px; }
-            .official-table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 11px; }
-            .official-table th, .official-table td { border: 1px solid #000; padding: 4px 6px; text-align: center; }
-            .signature-block { text-align: center; margin-top: 30px; }
-            @media print {
-                @page { size: A4; margin: 0.5cm; }
-                body { margin: 0; padding: 0; }
-                .no-print { display: none; }
-            }
-        </style>
-    `;
-
-    printWindow.document.write(`<html><head><title>غير الموزعين</title>${css}</head><body>${fullHtml}</body></html>`);
+    printWindow.document.write(`<html><head><title>غير الموزعين</title>${PRINT_STYLES}</head><body>${fullHtml}</body></html>`);
     printWindow.document.close();
-    printWindow.onload = () => { setTimeout(() => { printWindow.print(); }, 500); };
+    triggerPrint(printWindow);
 }
 
 function generateUnifiedReport() {
@@ -2059,7 +2345,7 @@ function generateUnifiedReport() {
                 </div>
                 <div style="text-align:left">
                     <div style="width:70px; height:70px; border:2px solid #000; display:flex; align-items:center; justify-content:center; font-weight:bold; font-size:10px; background:#f8f9fa;">
-                         <img src="logo.png" style="width:100%; height:100%; object-fit:contain;" alt="شعار الإدارة">
+                         <img src="logo.png" style="width:100%; height:100%; object-fit:contain;" alt="شعار الإدارة" />
                     </div>
                 </div>
             </div>
@@ -2085,37 +2371,15 @@ function generateUnifiedReport() {
                 <p style="font-weight:bold; font-size:1.05rem; margin-top:8px;">${OFFICIALS.gm.name}</p>
             </div>
         </div>
-    `;
+        `;
 
     // Print
     const printWindow = window.open('', '_blank', 'width=1000,height=800');
     if (!printWindow) return showToast("يرجى السماح بالنوافذ المنبثقة", "⚠️");
 
-    const css = `
-        <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;900&display=swap" rel="stylesheet">
-        <style>
-            body { font-family: 'Cairo', sans-serif; direction: rtl; padding: 20px; }
-            .report-page { page-break-after: always; min-height: 100vh; position: relative; }
-            .report-header { display: flex; justify-content: space-between; border-bottom: 2px solid #000; padding-bottom: 10px; margin-bottom: 15px; }
-            .report-title-box { text-align: center; border: 2px solid #000; padding: 5px; border-radius: 8px; }
-            .official-table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 11px; }
-            .official-table th, .official-table td { border: 1px solid #000; padding: 4px 6px; text-align: center; }
-            .signature-block { text-align: center; margin-top: 30px; }
-            @media print {
-                @page { size: A4; margin: 0.5cm; }
-                body { margin: 0; padding: 0; }
-                .no-print { display: none; }
-                table { page-break-inside: auto; }
-                tr { page-break-inside: avoid; page-break-after: auto; }
-                thead { display: table-header-group; }
-                tfoot { display: table-footer-group; }
-            }
-        </style>
-    `;
-
-    printWindow.document.write(`<html><head><title>الكشف الموحد</title>${css}</head><body>${fullHtml}</body></html>`);
+    printWindow.document.write(`<html><head><title>الكشف الموحد</title>${PRINT_STYLES}</head><body>${fullHtml}</body></html>`);
     printWindow.document.close();
-    printWindow.onload = () => { setTimeout(() => { printWindow.print(); }, 500); };
+    triggerPrint(printWindow);
 }
 
 function generateUnassignedSchoolsReport() {
@@ -2141,7 +2405,7 @@ function generateUnassignedSchoolsReport() {
             <td>${getVal(s, 'النوعية')}</td>
             <td>${getGuidanceName(getVal(s, 'كود التوجيه') || getVal(s, 'التوجيه'))}</td>
         </tr>
-    `).join('');
+        `).join('');
 
     const fullHtml = `
         <div class="report-page">
@@ -2157,7 +2421,7 @@ function generateUnassignedSchoolsReport() {
                 </div>
                 <div style="text-align:left">
                     <div style="width:70px; height:70px; border:2px solid #000; display:flex; align-items:center; justify-content:center; font-weight:bold; font-size:10px; background:#f8f9fa;">
-                         <img src="logo.png" style="width:100%; height:100%; object-fit:contain;" alt="شعار الإدارة">
+                         <img src="logo.png" style="width:100%; height:100%; object-fit:contain;" alt="شعار الإدارة" />
                     </div>
                 </div>
             </div>
@@ -2187,33 +2451,15 @@ function generateUnassignedSchoolsReport() {
                 <p style="font-weight:bold; font-size:1.05rem; margin-top:8px;">${OFFICIALS.gm.name}</p>
             </div>
         </div>
-    `;
+        `;
 
     // Print
     const printWindow = window.open('', '_blank', 'width=1000,height=800');
     if (!printWindow) return showToast("يرجى السماح بالنوافذ المنبثقة", "⚠️");
 
-    const css = `
-        <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;900&display=swap" rel="stylesheet">
-        <style>
-            body { font-family: 'Cairo', sans-serif; direction: rtl; padding: 20px; }
-            .report-page { page-break-after: always; min-height: 100vh; position: relative; }
-            .report-header { display: flex; justify-content: space-between; border-bottom: 2px solid #000; padding-bottom: 10px; margin-bottom: 15px; }
-            .report-title-box { text-align: center; border: 2px solid #000; padding: 5px; border-radius: 8px; }
-            .official-table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 11px; }
-            .official-table th, .official-table td { border: 1px solid #000; padding: 4px 6px; text-align: center; }
-            .signature-block { text-align: center; margin-top: 30px; }
-            @media print {
-                @page { size: A4; margin: 0.5cm; }
-                body { margin: 0; padding: 0; }
-                .no-print { display: none; }
-            }
-        </style>
-    `;
-
-    printWindow.document.write(`<html><head><title>تقرير العجز</title>${css}</head><body>${fullHtml}</body></html>`);
+    printWindow.document.write(`<html><head><title>تقرير العجز</title>${PRINT_STYLES}</head><body>${fullHtml}</body></html>`);
     printWindow.document.close();
-    printWindow.onload = () => { setTimeout(() => { printWindow.print(); }, 500); };
+    triggerPrint(printWindow);
 }
 
 let currentMgmtType = 'schools';
@@ -2301,32 +2547,35 @@ function renderManagementTable(type) {
                 <td>${getVal(item, 'اسم المدرسة')}</td>
                 <td>${getVal(item, 'المرحلة')}</td>
                 <td>${getVal(item, 'النوعية')}</td>
-                <td>${getVal(item, 'كود التوجيه')}</td>
+                <td>${getGuidanceName(getVal(item, 'كود التوجيه'))}</td>
             `;
         } else if (type === 'supervisors') {
-            const status = isSupervisorAvailable(item) ? '✅ نشط' : '❌ غير نشط';
             cells = `
                 <td>${getVal(item, 'كود الموجه')}</td>
                 <td>${getVal(item, 'اسم الموجه')}</td>
                 <td>${getGuidanceName(getVal(item, 'كود التوجيه'))}</td>
-                <td>${status}</td>
+                <td>
+                    <span class="px-2 py-1 rounded-full text-[10px] ${getVal(item, 'الحالة') === 'متاح' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}">
+                        ${getVal(item, 'الحالة')}
+                    </span>
+                </td>
             `;
-        } else if (type === 'guidance') {
+        } else { // Guidance
             cells = `
                 <td>${getVal(item, 'كود التوجيه')}</td>
                 <td>${getVal(item, 'اسم التوجيه')}</td>
-                <td>*****</td>
+                <td>●●●●●●</td>
             `;
         }
 
         return `
-            <tr class="hover:bg-white/5 border-b border-white/5 transition-colors">
-                ${cells.replace(/<td>/g, '<td class="px-6 py-4 text-sm">')}
-                <td class="px-6 py-4 flex gap-2 justify-center">
-                    <button onclick="editRecord('${itemId}')" class="p-2 bg-indigo-500/20 text-indigo-300 rounded hover:bg-indigo-500/40" title="تعديل">✏️</button>
-                    <button onclick="deleteRecord('${itemId}')" class="p-2 bg-rose-500/20 text-rose-300 rounded hover:bg-rose-500/40" title="حذف">🗑️</button>
-                </td>
-            </tr>
+        <tr class="hover:bg-white/5 border-b border-white/5 transition-colors">
+            ${cells.replace(/<td>/g, '<td class="px-6 py-4 text-sm">')}
+    <td class="px-6 py-4 flex gap-2 justify-center">
+        <button onclick="editRecord('${itemId}')" class="p-2 bg-indigo-500/20 text-indigo-300 rounded hover:bg-indigo-500/40" title="تعديل">✏️</button>
+        <button onclick="deleteRecord('${itemId}')" class="p-2 bg-rose-500/20 text-rose-300 rounded hover:bg-rose-500/40" title="حذف">🗑️</button>
+    </td>
+            </tr >
         `;
     }).join('');
 }
@@ -2392,7 +2641,7 @@ function buildForm(data = {}) {
             if (field.id === 'كود المدرسة' && currentEditId) input.readOnly = true; // Prevent ID change on edit
         }
 
-        input.id = `field_${field.id}`;
+        input.id = `field_${field.id} `;
         div.appendChild(label);
         div.appendChild(input);
         form.appendChild(div);
@@ -2404,7 +2653,7 @@ async function saveMgmtRecord() {
     const formData = {};
 
     config.fields.forEach(field => {
-        const el = document.getElementById(`field_${field.id}`);
+        const el = document.getElementById(`field_${field.id} `);
         formData[field.id] = el.value;
     });
 
@@ -2538,3 +2787,173 @@ async function sendToBackend(action, data) {
         return false;
     }
 }
+
+// --- Supervisor Status Management ---
+
+/**
+ * عرض جدول إدارة حالة الموجهين
+ */
+function renderStatusTable() {
+    const searchVal = (document.getElementById('statusSearch')?.value || '').toLowerCase();
+    const tbody = document.getElementById('statusTableBody');
+    if (!tbody) return;
+
+    const filtered = DATA.supervisors.filter(s =>
+        Object.values(s).join(' ').toLowerCase().includes(searchVal)
+    );
+
+    tbody.innerHTML = filtered.map(sup => {
+        const code = getVal(sup, 'كود الموجه');
+        const name = getVal(sup, 'اسم الموجه');
+        const isActive = isSupervisorAvailable(sup);
+        const guidName = getGuidanceName(getVal(sup, 'كود التوجيه'));
+
+        // حساب عدد المدارس المخصصة لهذا الموجه
+        const assignedSchools = DATA.final.filter(s => s.finalSupCode == code);
+        const schoolCount = assignedSchools.length;
+
+        return `
+        < tr class="hover:bg-white/5 transition-colors" >
+                <td class="px-6 py-4 text-sm">${code}</td>
+                <td class="px-6 py-4 text-sm font-bold">${name}</td>
+                <td class="px-6 py-4 text-sm">${guidName}</td>
+                <td class="px-6 py-4 text-center">
+                    <span class="px-3 py-1 rounded-lg text-xs font-bold ${isActive
+                ? 'bg-emerald-500/20 text-emerald-300 ring-1 ring-emerald-500/30'
+                : 'bg-rose-500/20 text-rose-300 ring-1 ring-rose-500/30'
+            }">
+                        ${isActive ? '✅ نشط' : '❌ غير نشط'}
+                    </span>
+                </td>
+                <td class="px-6 py-4 text-center">
+                    <div class="flex items-center justify-center gap-2">
+                        <button 
+                            onclick="toggleSupervisorStatus('${code}')" 
+                            class="px-4 py-2 rounded-lg text-xs font-bold transition-all ${isActive
+                ? 'bg-rose-600 hover:bg-rose-500 text-white'
+                : 'bg-emerald-600 hover:bg-emerald-500 text-white'
+            }"
+                        >
+                            ${isActive ? '🚫 إيقاف' : '✅ تفعيل'}
+                        </button>
+                        ${schoolCount > 0 ? `
+                            <span class="text-xs px-2 py-1 bg-amber-500/20 text-amber-300 rounded-lg font-bold">
+                                ${schoolCount} مدرسة
+                            </span>
+                        ` : ''}
+                    </div>
+                </td>
+            </tr >
+        `;
+    }).join('');
+
+    if (filtered.length === 0) {
+        tbody.innerHTML = `
+        < tr >
+        <td colspan="5" class="px-6 py-12 text-center text-slate-500">
+            <div class="text-4xl mb-2">🔍</div>
+            لا توجد نتائج للبحث
+        </td>
+            </tr >
+        `;
+    }
+}
+
+/**
+ * تبديل حالة الموجه بين نشط وغير نشط
+ */
+async function toggleSupervisorStatus(supCode) {
+    const supervisor = DATA.supervisors.find(s => getVal(s, 'كود الموجه') == supCode);
+    if (!supervisor) return showToast('الموجه غير موجود', '❌');
+
+    const isCurrentlyActive = isSupervisorAvailable(supervisor);
+    const newStatus = isCurrentlyActive ? 'غير متاح' : 'متاح';
+    const supName = getVal(supervisor, 'اسم الموجه');
+
+    // حساب المدارس المتأثرة
+    const assignedSchools = DATA.final.filter(s => s.finalSupCode == supCode);
+
+    // تحذير إذا كان الموجه لديه مدارس ويتم إيقافه
+    if (isCurrentlyActive && assignedSchools.length > 0) {
+        const confirmMsg = `⚠️ تحذير!\n\nالموجه "${supName}" لديه ${assignedSchools.length} مدرسة مخصصة.\n\nإذا قمت بإيقافه، ستصبح هذه المدارس بحاجة لإعادة توزيع.\n\nهل تريد المتابعة؟`;
+        if (!confirm(confirmMsg)) return;
+    }
+
+    const gasUrl = document.getElementById('gasUrl')?.value;
+    if (!gasUrl) return showToast('يرجى إعداد رابط GAS أولاً', '⚠️');
+
+    toggleLoader(true, 'جاري تحديث حالة الموجه...');
+
+    try {
+        // إرسال التحديث إلى Google Sheets
+        await fetch(gasUrl, {
+            method: 'POST',
+            body: JSON.stringify({
+                type: 'supervisor',
+                action: 'update',
+                id: supCode,
+                data: { 'الحالة': newStatus }
+            })
+        });
+
+        // تحديث البيانات محلياً
+        supervisor['الحالة'] = newStatus;
+        supervisor['متاح'] = newStatus;
+        supervisor['نشط'] = newStatus;
+
+        // إعادة عرض الجدول
+        renderStatusTable();
+
+        // إذا تم إيقاف موجه لديه مدارس، عرض تنبيه
+        if (newStatus === 'غير متاح' && assignedSchools.length > 0) {
+            showToast(`تم إيقاف الموجه.${assignedSchools.length} مدرسة بحاجة لإعادة توزيع`, '⚠️');
+
+            // الانتقال تلقائياً لعرض المدارس المتأثرة
+            setTimeout(() => {
+                showAffectedSchools(supCode);
+            }, 2000);
+        } else {
+            showToast(`تم ${isCurrentlyActive ? 'إيقاف' : 'تفعيل'} الموجه بنجاح`, '✅');
+        }
+
+    } catch (e) {
+        console.error('Error updating supervisor status:', e);
+        showToast('فشل في تحديث الحالة', '❌');
+    } finally {
+        toggleLoader(false);
+    }
+}
+
+/**
+ * عرض المدارس المتأثرة بإيقاف موجه
+ */
+function showAffectedSchools(supCode) {
+    const supervisor = DATA.supervisors.find(s => getVal(s, 'كود الموجه') == supCode);
+    const supName = getVal(supervisor, 'اسم الموجه');
+    const affectedSchools = DATA.final.filter(s => s.finalSupCode == supCode);
+
+    if (affectedSchools.length === 0) return;
+
+    const schoolsList = affectedSchools.map(s => `• ${getVal(s, 'اسم المدرسة')} `).join('\n');
+
+    alert(`📋 المدارس التي كانت مخصصة للموجه "${supName}": \n\n${schoolsList} \n\nيمكنك إعادة توزيعها من خلال: \n1.الانتقال إلى علامة تبويب "النتائج"\n2.استخدام زر "⚡ توزيع وإصلاح" لإعادة التوزيع التلقائي\n3.أو استخدام التغيير اليدوي لكل مدرسة`);
+}
+
+/**
+ * الحصول على المدارس التي لديها موجهين غير نشطين
+ */
+function getSchoolsWithInactiveSupervisors() {
+    return DATA.final.filter(school => {
+        if (!school.finalSupCode) return false;
+        const supervisor = DATA.supervisors.find(s =>
+            getVal(s, 'كود الموجه') == school.finalSupCode
+        );
+        return supervisor && !isSupervisorAvailable(supervisor);
+    });
+}
+
+// تصدير الدوال للوصول العام
+window.renderStatusTable = renderStatusTable;
+window.toggleSupervisorStatus = toggleSupervisorStatus;
+window.getSchoolsWithInactiveSupervisors = getSchoolsWithInactiveSupervisors;
+window.showAffectedSchools = showAffectedSchools;
